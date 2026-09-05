@@ -5,7 +5,10 @@ const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
 const { google } = require("googleapis");
-const { getMonitoringState } = require("./monitoring-state");
+const {
+  getMonitoringState,
+  getCalendarSyncEnabled,
+} = require("./monitoring-state");
 
 const {
   CANVAS_BASE_URL,
@@ -229,6 +232,16 @@ async function main() {
 
     return;
   }
+
+  const calendarSyncEnabled = getCalendarSyncEnabled(db);
+
+  if (!calendarSyncEnabled) {
+    console.log(
+      "Google Calendar synchronization is disabled. Sync skipped."
+  );
+
+  return;
+}
 
   const calendar = createGoogleCalendarClient();
   const activities = await getDatedAssignments();
