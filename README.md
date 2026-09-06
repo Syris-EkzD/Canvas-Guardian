@@ -1,8 +1,20 @@
-# Horus — Canvas Guardian
+# Canvas Guardian
 
-Horus is a self-hosted personal academic assistant designed to monitor Canvas LMS, send direct Telegram notifications, and synchronize assignment deadlines with Google Calendar.
+Canvas Guardian is a self-hosted academic monitoring application designed to monitor Canvas LMS, send direct Telegram notifications, and synchronize assignment deadlines with Google Calendar.
 
 It runs automatically on an Ubuntu server, so Canvas does not need to remain open in a browser.
+
+## Naming and deployment compatibility
+
+Canvas Guardian is the software project. Horus is the separate WhiteTree academic
+helper and is no longer the software's product name. The GitHub repository is
+`Syris-EkzD/Canvas-Guardian`.
+
+This documentation and repository rename preserves the existing deployment. The
+local checkout at `Work/Projects/horus`, `data/horus.db`, service configuration,
+calendar ownership identifiers, and existing runtime message text remain unchanged.
+Migrating those names is a separate setup task; renaming this repository does not
+require moving the checkout, replacing its database, or restarting services.
 
 ## Features
 
@@ -26,7 +38,7 @@ It runs automatically on an Ubuntu server, so Canvas does not need to remain ope
 | `/stop` | Stop automatic Canvas monitoring |
 | `/pause` | Temporarily pause Canvas monitoring |
 | `/resume` | Resume paused Canvas monitoring |
-| `/status` | Show Horus and calendar status |
+| `/status` | Show Canvas Guardian and calendar status |
 | `/announcements` | Show recent Canvas announcements |
 | `/pending` | Show all unfinished activities |
 | `/today` | Show activities due today |
@@ -38,7 +50,7 @@ It runs automatically on an Ubuntu server, so Canvas does not need to remain ope
 
 ## How It Works
 
-1. Horus retrieves course and assignment information through the Canvas LMS API.
+1. Canvas Guardian retrieves course and assignment information through the Canvas LMS API.
 2. Assignment data and notification history are stored in a local SQLite database.
 3. Telegram provides activity notifications and remote controls.
 4. Google Calendar receives and updates assignment deadline events.
@@ -56,7 +68,7 @@ It runs automatically on an Ubuntu server, so Canvas does not need to remain ope
 
 ## Privacy and Security
 
-Horus uses read-only Canvas access and never automatically submits or modifies schoolwork.
+Canvas Guardian uses read-only Canvas access and never automatically submits or modifies schoolwork.
 
 API tokens, Google credentials, OAuth tokens, databases, and other private files are excluded from the Git repository through `.gitignore`.
 
