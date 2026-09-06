@@ -4,18 +4,6 @@ Canvas Guardian is a self-hosted academic monitoring application designed to mon
 
 It runs automatically on an Ubuntu server, so Canvas does not need to remain open in a browser.
 
-## Naming and deployment compatibility
-
-Canvas Guardian is the software project. Horus is the separate WhiteTree academic
-helper and is no longer the software's product name. The GitHub repository is
-`Syris-EkzD/Canvas-Guardian`.
-
-This documentation and repository rename preserves the existing deployment. The
-local checkout at `Work/Projects/horus`, `data/horus.db`, service configuration,
-calendar ownership identifiers, and existing runtime message text remain unchanged.
-Migrating those names is a separate setup task; renaming this repository does not
-require moving the checkout, replacing its database, or restarting services.
-
 ## Features
 
 - Monitors Canvas for new and upcoming activities
