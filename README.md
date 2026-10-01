@@ -54,6 +54,52 @@ It runs automatically on an Ubuntu server, so Canvas does not need to remain ope
 - systemd
 - Ubuntu Server
 
+## Local Setup
+
+1. Clone the repository and enter it:
+
+   ```bash
+   git clone https://github.com/Syris-EkzD/Canvas-Guardian.git
+   cd Canvas-Guardian
+   ```
+
+2. Install dependencies:
+
+   ```bash
+   npm ci
+   ```
+
+3. Copy the environment template and fill in the required values:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Configure `CANVAS_BASE_URL`, `CANVAS_ACCESS_TOKEN`,
+   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_CHAT_ID`, and
+   `GOOGLE_CALENDAR_ID` in `.env`.
+
+4. To use Google Calendar synchronization, provide these private files:
+
+   - `secrets/google-oauth-credentials.json`
+   - `secrets/google-oauth-token.json`
+
+   After placing the Google Desktop app credentials file, the existing
+   authorization script can create the OAuth token file:
+
+   ```bash
+   node src/authorize-google-calendar.js
+   ```
+
+5. Run the automated tests:
+
+   ```bash
+   npm test
+   ```
+
+Never commit `.env`, Canvas access tokens, Telegram bot tokens, Google OAuth
+credential or token files, or local SQLite databases.
+
 ## Privacy and Security
 
 Canvas Guardian uses read-only Canvas access and never automatically submits or modifies schoolwork.
