@@ -1,5 +1,7 @@
 require("dotenv").config();
 
+const { canvasGet } = require("./canvas-client");
+
 const {
   CANVAS_BASE_URL,
   CANVAS_ACCESS_TOKEN,
@@ -14,20 +16,7 @@ function requireSetting(name, value) {
 }
 
 async function getCanvasProfile() {
-  const response = await fetch(
-    `${CANVAS_BASE_URL}/api/v1/users/self/profile`,
-    {
-      headers: {
-        Authorization: `Bearer ${CANVAS_ACCESS_TOKEN}`,
-      },
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`Canvas returned HTTP ${response.status}`);
-  }
-
-  return response.json();
+  return canvasGet("/api/v1/users/self/profile");
 }
 
 async function sendTelegramMessage(text) {

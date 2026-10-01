@@ -2,11 +2,10 @@ require("dotenv").config({ quiet: true });
 
 const path = require("path");
 const Database = require("better-sqlite3");
+const { canvasGet } = require("./canvas-client");
 const { getMonitoringState } = require("./monitoring-state");
 
 const {
-  CANVAS_BASE_URL,
-  CANVAS_ACCESS_TOKEN,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_ALLOWED_CHAT_ID,
 } = process.env;
@@ -22,20 +21,6 @@ db.exec(`
     PRIMARY KEY (assignment_key, due_at, reminder_type)
   );
 `);
-
-async function canvasGet(pathname) {
-  const response = await fetch(`${CANVAS_BASE_URL}${pathname}`, {
-    headers: {
-      Authorization: `Bearer ${CANVAS_ACCESS_TOKEN}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Canvas returned HTTP ${response.status}`);
-  }
-
-  return response.json();
-}
 
 function formatDate(dateString) {
   return new Date(dateString).toLocaleString("en-PH", {

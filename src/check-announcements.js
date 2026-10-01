@@ -1,20 +1,6 @@
 require("dotenv").config({ quiet: true });
 
-const { CANVAS_BASE_URL, CANVAS_ACCESS_TOKEN } = process.env;
-
-async function canvasGet(path) {
-  const response = await fetch(`${CANVAS_BASE_URL}${path}`, {
-    headers: {
-      Authorization: `Bearer ${CANVAS_ACCESS_TOKEN}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Canvas returned HTTP ${response.status}`);
-  }
-
-  return response.json();
-}
+const { canvasGet } = require("./canvas-client");
 
 async function main() {
   const courses = await canvasGet(

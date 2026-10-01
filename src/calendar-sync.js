@@ -5,14 +5,13 @@ const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
 const { google } = require("googleapis");
+const { canvasGetAll } = require("./canvas-client");
 const {
   getMonitoringState,
   getCalendarSyncEnabled,
 } = require("./monitoring-state");
 
 const {
-  CANVAS_BASE_URL,
-  CANVAS_ACCESS_TOKEN,
   GOOGLE_CALENDAR_ID,
 } = process.env;
 
@@ -70,42 +69,6 @@ function createGoogleCalendarClient() {
     version: "v3",
     auth,
   });
-}
-
-function getNextLink(linkHeader) {
-  if (!linkHeader) {
-    return null;
-  }
-
-  const nextPart = linkHeader
-    .split(",")
-    .find((part) => part.includes('rel="next"'));
-
-  return nextPart?.match(/<([^>]+)>/)?.[1] || null;
-}
-
-async function canvasGetAll(pathname) {
-  let url = `${CANVAS_BASE_URL}${pathname}`;
-  const results = [];
-
-  while (url) {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${CANVAS_ACCESS_TOKEN}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Canvas returned HTTP ${response.status}`);
-    }
-
-    const page = await response.json();
-    results.push(...page);
-
-    url = getNextLink(response.headers.get("link"));
-  }
-
-  return results;
 }
 
 function isSubmitted(assignment) {
