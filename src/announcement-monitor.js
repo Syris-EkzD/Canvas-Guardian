@@ -2,11 +2,10 @@ require("dotenv").config({ quiet: true });
 
 const path = require("path");
 const Database = require("better-sqlite3");
+const { canvasGet } = require("./canvas-client");
 const { getMonitoringState } = require("./monitoring-state");
 
 const {
-  CANVAS_BASE_URL,
-  CANVAS_ACCESS_TOKEN,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_ALLOWED_CHAT_ID,
 } = process.env;
@@ -35,20 +34,6 @@ function setSetting(key, value) {
     VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(key, value);
-}
-
-async function canvasGet(pathname) {
-  const response = await fetch(`${CANVAS_BASE_URL}${pathname}`, {
-    headers: {
-      Authorization: `Bearer ${CANVAS_ACCESS_TOKEN}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Canvas returned HTTP ${response.status}`);
-  }
-
-  return response.json();
 }
 
 async function getAnnouncements() {

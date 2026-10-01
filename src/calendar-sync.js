@@ -6,13 +6,14 @@ const path = require("path");
 const Database = require("better-sqlite3");
 const { google } = require("googleapis");
 const {
+  getAllActiveCourseAssignments,
+} = require("./canvas-assignments");
+const {
   getMonitoringState,
   getCalendarSyncEnabled,
 } = require("./monitoring-state");
 
 const {
-  CANVAS_BASE_URL,
-  CANVAS_ACCESS_TOKEN,
   GOOGLE_CALENDAR_ID,
 } = process.env;
 
@@ -72,80 +73,14 @@ function createGoogleCalendarClient() {
   });
 }
 
-function getNextLink(linkHeader) {
-  if (!linkHeader) {
-    return null;
-  }
-
-  const nextPart = linkHeader
-    .split(",")
-    .find((part) => part.includes('rel="next"'));
-
-  return nextPart?.match(/<([^>]+)>/)?.[1] || null;
-}
-
-async function canvasGetAll(pathname) {
-  let url = `${CANVAS_BASE_URL}${pathname}`;
-  const results = [];
-
-  while (url) {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${CANVAS_ACCESS_TOKEN}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Canvas returned HTTP ${response.status}`);
-    }
-
-    const page = await response.json();
-    results.push(...page);
-
-    url = getNextLink(response.headers.get("link"));
-  }
-
-  return results;
-}
-
-function isSubmitted(assignment) {
-  const submission = assignment.submission;
-
-  return (
-    Boolean(submission?.submitted_at) ||
-    submission?.workflow_state === "submitted" ||
-    submission?.workflow_state === "graded"
-  );
-}
-
 async function getDatedAssignments() {
-  const courses = await canvasGetAll(
-    "/api/v1/courses?enrollment_state=active&per_page=100"
-  );
-
-  const activities = [];
-
-  for (const course of courses) {
-    const assignments = await canvasGetAll(
-      `/api/v1/courses/${course.id}/assignments?include[]=submission&order_by=due_at&per_page=100`
-    );
-
-    for (const assignment of assignments) {
-      if (!assignment.published || !assignment.due_at) {
-        continue;
-      }
-
-      activities.push({
-        key: `${course.id}:${assignment.id}`,
-        course: course.course_code || course.name,
-        name: assignment.name,
-        dueAt: assignment.due_at,
-        htmlUrl: assignment.html_url,
-        submitted: isSubmitted(assignment),
-        excused: assignment.submission?.excused === true,
-      });
-    }
-  }
+  const assignments = await getAllActiveCourseAssignments();
+  const activities = assignments
+    .filter((assignment) => assignment.published && assignment.dueAt)
+    .map((assignment) => ({
+      ...assignment,
+      excused: assignment.excused === true,
+    }));
 
   return activities.sort(
     (a, b) =>

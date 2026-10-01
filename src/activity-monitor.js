@@ -2,11 +2,10 @@ require("dotenv").config({ quiet: true });
 
 const path = require("path");
 const Database = require("better-sqlite3");
+const { getActiveCourseAssignments } = require("./canvas-assignments");
 const { getMonitoringState } = require("./monitoring-state");
 
 const {
-  CANVAS_BASE_URL,
-  CANVAS_ACCESS_TOKEN,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_ALLOWED_CHAT_ID,
 } = process.env;
@@ -37,20 +36,6 @@ function setSetting(key, value) {
   `).run(key, value);
 }
 
-async function canvasGet(pathname) {
-  const response = await fetch(`${CANVAS_BASE_URL}${pathname}`, {
-    headers: {
-      Authorization: `Bearer ${CANVAS_ACCESS_TOKEN}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Canvas returned HTTP ${response.status}`);
-  }
-
-  return response.json();
-}
-
 function formatDate(dateString) {
   if (!dateString) return "No due date";
 
@@ -62,38 +47,14 @@ function formatDate(dateString) {
 }
 
 async function getPendingActivities() {
-  const courses = await canvasGet(
-    "/api/v1/courses?enrollment_state=active&per_page=100"
+  const assignments = await getActiveCourseAssignments();
+
+  return assignments.filter(
+    (assignment) =>
+      assignment.published &&
+      !assignment.submitted &&
+      !assignment.excused
   );
-
-  const activities = [];
-
-  for (const course of courses) {
-    const assignments = await canvasGet(
-      `/api/v1/courses/${course.id}/assignments?include[]=submission&order_by=due_at&per_page=100`
-    );
-
-    for (const assignment of assignments) {
-      const submission = assignment.submission;
-
-      const isSubmitted =
-        Boolean(submission?.submitted_at) ||
-        submission?.workflow_state === "submitted" ||
-        submission?.workflow_state === "graded";
-
-      if (assignment.published && !isSubmitted && !submission?.excused) {
-        activities.push({
-          id: String(assignment.id),
-          course: course.course_code || course.name,
-          name: assignment.name,
-          dueAt: assignment.due_at,
-          htmlUrl: assignment.html_url,
-        });
-      }
-    }
-  }
-
-  return activities;
 }
 
 async function sendTelegramMessage(text) {

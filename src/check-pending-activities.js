@@ -1,20 +1,6 @@
 require("dotenv").config({ quiet: true });
 
-const { CANVAS_BASE_URL, CANVAS_ACCESS_TOKEN } = process.env;
-
-async function canvasGet(pathname) {
-  const response = await fetch(`${CANVAS_BASE_URL}${pathname}`, {
-    headers: {
-      Authorization: `Bearer ${CANVAS_ACCESS_TOKEN}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Canvas returned HTTP ${response.status}`);
-  }
-
-  return response.json();
-}
+const { getActiveCourseAssignments } = require("./canvas-assignments");
 
 function formatDate(dateString) {
   if (!dateString) {
@@ -29,37 +15,13 @@ function formatDate(dateString) {
 }
 
 async function main() {
-  const courses = await canvasGet(
-    "/api/v1/courses?enrollment_state=active&per_page=100"
+  const assignments = await getActiveCourseAssignments();
+  const pendingActivities = assignments.filter(
+    (assignment) =>
+      assignment.published &&
+      !assignment.submitted &&
+      assignment.excused !== true
   );
-
-  const pendingActivities = [];
-
-  for (const course of courses) {
-    const assignments = await canvasGet(
-      `/api/v1/courses/${course.id}/assignments?include[]=submission&order_by=due_at&per_page=100`
-    );
-
-    for (const assignment of assignments) {
-      const submission = assignment.submission;
-
-      const isSubmitted =
-        Boolean(submission?.submitted_at) ||
-        submission?.workflow_state === "submitted" ||
-        submission?.workflow_state === "graded";
-
-      const isExcused = submission?.excused === true;
-
-      if (assignment.published && !isSubmitted && !isExcused) {
-        pendingActivities.push({
-          course: course.course_code || course.name,
-          name: assignment.name,
-          dueAt: assignment.due_at,
-          htmlUrl: assignment.html_url,
-        });
-      }
-    }
-  }
 
   pendingActivities.sort((a, b) => {
     if (!a.dueAt) return 1;
