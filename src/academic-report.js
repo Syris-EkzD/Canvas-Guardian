@@ -44,7 +44,7 @@ const sheetDefinitions = {
     { header: "Status", key: "status", width: 19 },
     { header: "Score", key: "score", width: 12 },
     { header: "Points Possible", key: "pointsPossible", width: 17 },
-    { header: "Grade", key: "grade", width: 14 },
+    { header: "Percentage", key: "percentage", width: 14 },
   ],
   Attendance: [
     { header: "Course", key: "course", width: 22 },
@@ -85,6 +85,20 @@ function formatAttendanceStatus(status) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
+function calculatePercentage(score, pointsPossible) {
+  if (
+    score === null ||
+    score === undefined ||
+    pointsPossible === null ||
+    pointsPossible === undefined ||
+    pointsPossible <= 0
+  ) {
+    return null;
+  }
+
+  return score / pointsPossible;
+}
+
 function buildAssignmentRows(assignments) {
   return assignments
     .filter((assignment) => !isRollCallAssignment(assignment))
@@ -95,7 +109,10 @@ function buildAssignmentRows(assignments) {
       status: getAssignmentStatus(assignment),
       score: assignment.score ?? null,
       pointsPossible: assignment.pointsPossible ?? null,
-      grade: assignment.grade ?? null,
+      percentage: calculatePercentage(
+        assignment.score,
+        assignment.pointsPossible
+      ),
     }));
 }
 
@@ -211,6 +228,10 @@ function addReportSheet(workbook, name, rows) {
     views: [{ state: "frozen", ySplit: 1, showGridLines: false }],
   });
   worksheet.columns = sheetDefinitions[name];
+    if (name === "Assignments") {
+    worksheet.getColumn("percentage").numFmt = "0.##%";
+    }
+
   worksheet.addRows(rows);
   worksheet.autoFilter = {
     from: "A1",
@@ -287,6 +308,7 @@ module.exports = {
   buildAssignmentRows,
   buildAttendanceRows,
   buildSummaryRows,
+  calculatePercentage,
   createAcademicWorkbook,
   isRollCallAssignment,
   sheetDefinitions,
