@@ -6,6 +6,7 @@ const {
   buildAssignmentRows,
   buildAttendanceRows,
   buildSummaryRows,
+  calculatePercentage,
   createAcademicWorkbook,
   sheetDefinitions,
 } = require("../src/academic-report");
@@ -130,7 +131,7 @@ test("builds normal assignment rows with Canvas values and excludes Roll Call", 
       status: "Submitted",
       score: 23,
       pointsPossible: 25,
-      grade: "23",
+      percentage: 0.92,
     },
     {
       course: "ART 123-X",
@@ -139,7 +140,7 @@ test("builds normal assignment rows with Canvas values and excludes Roll Call", 
       status: "Pending",
       score: null,
       pointsPossible: null,
-      grade: null,
+      percentage: null,
     },
     {
       course: "ART 123-X",
@@ -148,7 +149,7 @@ test("builds normal assignment rows with Canvas values and excludes Roll Call", 
       status: "Excused",
       score: null,
       pointsPossible: 10,
-      grade: null,
+      percentage: null,
     },
     {
       course: "SCI 456-Y",
@@ -157,9 +158,17 @@ test("builds normal assignment rows with Canvas values and excludes Roll Call", 
       status: "Pending",
       score: 0,
       pointsPossible: 20,
-      grade: "",
+      percentage: 0,
     },
   ]);
+});
+
+test("calculates Excel-compatible assignment percentage values", () => {
+  assert.equal(calculatePercentage(23, 25), 0.92);
+  assert.equal(calculatePercentage(0, 20), 0);
+  assert.equal(calculatePercentage(null, 20), null);
+  assert.equal(calculatePercentage(10, null), null);
+  assert.equal(calculatePercentage(10, 0), null);
 });
 
 test("sorts attendance rows by course and date with readable statuses", () => {
@@ -276,8 +285,9 @@ test("creates the required workbook schema and wraps assignment names", async ()
     "Submitted",
     23,
     25,
-    "23",
+    0.92,
   ]);
+  assert.equal(assignmentSheet.getCell("G2").numFmt, "0.##%");
   assert.equal(assignmentSheet.getCell("B2").alignment.wrapText, true);
   assert.ok(assignmentSheet.getRow(2).height > 18);
   assert.equal(assignmentSheet.getCell("E3").value, null);
