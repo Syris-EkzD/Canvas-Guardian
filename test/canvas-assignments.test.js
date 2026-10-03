@@ -135,6 +135,7 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
   assert.deepEqual(assignments[0], {
     id: "301",
     key: "20:301",
+    courseId: "20",
     course: "CODE-20",
     name: "Submitted with timestamp",
     dueAt: "2026-10-10T08:00:00Z",
@@ -208,5 +209,9 @@ test("getAllActiveCourseAssignments includes later course and assignment pages i
   assert.deepEqual(
     assignments.map((assignment) => assignment.course),
     ["ONE", "ONE", "TWO"]
+  );
+  assert.deepEqual(
+    assignments.map((assignment) => assignment.courseId),
+    ["1", "1", "2"]
   );
 });

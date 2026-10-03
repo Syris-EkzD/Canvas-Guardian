@@ -9,6 +9,7 @@ function normalizeAssignment(course, assignment) {
   return {
     id: String(assignment.id),
     key: `${course.id}:${assignment.id}`,
+    courseId: String(course.id),
     course: course.course_code || course.name,
     name: assignment.name,
     dueAt: assignment.due_at,

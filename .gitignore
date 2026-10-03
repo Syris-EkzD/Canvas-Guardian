@@ -26,3 +26,9 @@ token*.json
 logs/
 tmp/
 .DS_Store
+
+# Private academic pipeline inputs and generated outputs
+data/input/*
+!data/input/.gitkeep
+data/output/*
+!data/output/.gitkeep
