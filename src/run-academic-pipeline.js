@@ -7,6 +7,7 @@ const {
   aggregateAttendanceByCourse,
   formatAcademicCsv,
   mergeAcademicData,
+  requireMergedRows,
 } = require("./academic-pipeline");
 const { importAttendance } = require("./attendance-import");
 const { getAllActiveCourseAssignments } = require("./canvas-assignments");
@@ -57,6 +58,7 @@ async function run() {
   const attendance = importAttendance(csvText, profile.id);
   const attendanceByCourse = aggregateAttendanceByCourse(attendance);
   const mergedRows = mergeAcademicData(assignments, attendanceByCourse);
+  requireMergedRows(mergedRows);
   const csvOutput = formatAcademicCsv(mergedRows);
 
   await writeOutput(csvOutput);

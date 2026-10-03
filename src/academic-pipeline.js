@@ -1,19 +1,32 @@
 const outputColumns = [
-  "course_id",
-  "course",
-  "assignment_id",
-  "assignment_name",
-  "due_at",
-  "published",
-  "submitted",
-  "excused",
-  "attendance_records",
-  "present_count",
-  "absent_count",
-  "late_count",
-  "attendance_first_date",
-  "attendance_last_date",
+  "Course",
+  "Assignment",
+  "Due Date",
+  "Status",
+  "Attendance Records",
+  "Present",
+  "Absent",
+  "Late",
+  "Attendance From",
+  "Attendance Through",
 ];
+
+const dueDateFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Manila",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+
+const attendanceDateFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Manila",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
 
 function aggregateAttendanceByCourse(attendance) {
   const summaries = new Map();
@@ -84,6 +97,57 @@ function mergeAcademicData(assignments, attendanceByCourse) {
   });
 }
 
+function requireMergedRows(rows) {
+  if (rows.length === 0) {
+    throw new Error("No Canvas assignments matched the attendance course IDs");
+  }
+
+  return rows;
+}
+
+function getAssignmentStatus(row) {
+  if (row.excused === true) {
+    return "Excused";
+  }
+
+  if (row.assignment_name.trim().toLowerCase() === "roll call attendance") {
+    return "Attendance Record";
+  }
+
+  if (row.submitted === true) {
+    return "Submitted";
+  }
+
+  return "Pending";
+}
+
+function formatDueDate(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return dueDateFormatter.format(new Date(value));
+}
+
+function formatAttendanceDate(value) {
+  return attendanceDateFormatter.format(new Date(`${value}T00:00:00+08:00`));
+}
+
+function toReportRow(row) {
+  return {
+    Course: row.course,
+    Assignment: row.assignment_name,
+    "Due Date": formatDueDate(row.due_at),
+    Status: getAssignmentStatus(row),
+    "Attendance Records": row.attendance_records,
+    Present: row.present_count,
+    Absent: row.absent_count,
+    Late: row.late_count,
+    "Attendance From": formatAttendanceDate(row.attendance_first_date),
+    "Attendance Through": formatAttendanceDate(row.attendance_last_date),
+  };
+}
+
 function encodeCsvValue(value) {
   if (value === null || value === undefined) {
     return "";
@@ -102,8 +166,9 @@ function formatAcademicCsv(rows) {
   const lines = [outputColumns.join(",")];
 
   for (const row of rows) {
+    const reportRow = toReportRow(row);
     lines.push(
-      outputColumns.map((column) => encodeCsvValue(row[column])).join(",")
+      outputColumns.map((column) => encodeCsvValue(reportRow[column])).join(",")
     );
   }
 
@@ -115,4 +180,5 @@ module.exports = {
   formatAcademicCsv,
   mergeAcademicData,
   outputColumns,
+  requireMergedRows,
 };

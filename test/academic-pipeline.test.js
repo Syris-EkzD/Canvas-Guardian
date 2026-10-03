@@ -1,10 +1,13 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const { parse } = require("csv-parse/sync");
 
 const {
   aggregateAttendanceByCourse,
   formatAcademicCsv,
   mergeAcademicData,
+  outputColumns,
+  requireMergedRows,
 } = require("../src/academic-pipeline");
 
 test("aggregates attendance and joins assignments by course ID", () => {
@@ -65,26 +68,72 @@ test("aggregates attendance and joins assignments by course ID", () => {
   ]);
 });
 
-test("formats merged rows as escaped CSV", () => {
+test("formats a human-readable report with display statuses and dates", () => {
+  const sharedFields = {
+    course_id: "9001",
+    course: "ART 123-X",
+    published: true,
+    attendance_records: 4,
+    present_count: 2,
+    absent_count: 1,
+    late_count: 1,
+    attendance_first_date: "2042-03-04",
+    attendance_last_date: "2042-03-25",
+  };
   const csv = formatAcademicCsv([
     {
-      course_id: "9001",
-      course: "ART 123-X",
+      ...sharedFields,
       assignment_id: "501",
       assignment_name: 'Study, "light"',
-      due_at: null,
-      published: true,
-      submitted: false,
+      due_at: "2026-07-14T01:00:00Z",
+      submitted: true,
       excused: undefined,
-      attendance_records: 1,
-      present_count: 1,
-      absent_count: 0,
-      late_count: 0,
-      attendance_first_date: "2042-03-04",
-      attendance_last_date: "2042-03-04",
+    },
+    {
+      ...sharedFields,
+      assignment_id: "502",
+      assignment_name: "Pending project",
+      due_at: null,
+      submitted: false,
+      excused: false,
+    },
+    {
+      ...sharedFields,
+      assignment_id: "503",
+      assignment_name: "Roll Call Attendance",
+      due_at: "2026-07-14T01:00:00Z",
+      submitted: true,
+      excused: true,
+    },
+    {
+      ...sharedFields,
+      assignment_id: "504",
+      assignment_name: "Roll Call Attendance",
+      due_at: null,
+      submitted: true,
+      excused: false,
     },
   ]);
+  const records = parse(csv, { columns: true });
 
+  assert.deepEqual(Object.keys(records[0]), outputColumns);
+  assert.equal(records[0].Assignment, 'Study, "light"');
+  assert.equal(records[0]["Due Date"], "Jul 14, 2026, 9:00 AM");
+  assert.equal(records[0].Status, "Submitted");
+  assert.equal(records[0]["Attendance From"], "Mar 4, 2042");
+  assert.equal(records[0]["Attendance Through"], "Mar 25, 2042");
+  assert.equal(records[1]["Due Date"], "");
+  assert.equal(records[1].Status, "Pending");
+  assert.equal(records[2].Status, "Excused");
+  assert.equal(records[3].Status, "Attendance Record");
   assert.match(csv, /"Study, ""light"""/);
+  assert.match(csv, /"Jul 14, 2026, 9:00 AM"/);
   assert.ok(csv.endsWith("\n"));
+});
+
+test("requires at least one assignment matched to attendance courses", () => {
+  assert.throws(
+    () => requireMergedRows([]),
+    /No Canvas assignments matched the attendance course IDs/
+  );
 });
