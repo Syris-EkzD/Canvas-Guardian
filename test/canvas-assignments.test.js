@@ -76,6 +76,7 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
             submitted_at: "2026-10-01T08:00:00Z",
             workflow_state: "unsubmitted",
             excused: "raw-excused-value",
+            grade: "A",
           },
         },
         {
@@ -143,12 +144,15 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
     published: true,
     submitted: true,
     excused: "raw-excused-value",
+    grade: "A",
   });
   assert.equal(assignments[1].submitted, true);
   assert.equal(assignments[2].submitted, true);
   assert.equal(assignments[2].course, "Course Ten");
   assert.equal(assignments[3].submitted, false);
   assert.equal(assignments[3].excused, undefined);
+  assert.equal(assignments[1].grade, null);
+  assert.equal(assignments[3].grade, null);
 });
 
 test("getAllActiveCourseAssignments includes later course and assignment pages in order", async () => {

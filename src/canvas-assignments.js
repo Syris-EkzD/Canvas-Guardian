@@ -20,6 +20,7 @@ function normalizeAssignment(course, assignment) {
       submission?.workflow_state === "submitted" ||
       submission?.workflow_state === "graded",
     excused: submission?.excused,
+    grade: submission?.grade ?? null,
   };
 }
 

@@ -3,18 +3,13 @@ require("dotenv").config({ quiet: true });
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
-const {
-  aggregateAttendanceByCourse,
-  formatAcademicCsv,
-  mergeAcademicData,
-  requireMergedRows,
-} = require("./academic-pipeline");
+const { createAcademicWorkbook } = require("./academic-report");
 const { importAttendance } = require("./attendance-import");
 const { getAllActiveCourseAssignments } = require("./canvas-assignments");
 const { canvasGet } = require("./canvas-client");
 
 const inputPath = path.resolve("data/input/attendance.csv");
-const outputPath = path.resolve("data/output/academic-pipeline.csv");
+const outputPath = path.resolve("data/output/academic-report.xlsx");
 
 function validateConfiguration() {
   const missing = ["CANVAS_BASE_URL", "CANVAS_ACCESS_TOKEN"].filter(
@@ -31,12 +26,12 @@ function getDateCoverage(attendance) {
   return `${dates[0]} to ${dates[dates.length - 1]}`;
 }
 
-async function writeOutput(csvOutput) {
+async function writeOutput(workbook) {
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   const temporaryPath = `${outputPath}.${process.pid}.tmp`;
 
   try {
-    await fs.writeFile(temporaryPath, csvOutput, "utf8");
+    await workbook.xlsx.writeFile(temporaryPath);
     await fs.rename(temporaryPath, outputPath);
   } catch (error) {
     await fs.rm(temporaryPath, { force: true }).catch(() => {});
@@ -56,15 +51,12 @@ async function run() {
   const assignments = await getAllActiveCourseAssignments();
   const csvText = await fs.readFile(inputPath, "utf8");
   const attendance = importAttendance(csvText, profile.id);
-  const attendanceByCourse = aggregateAttendanceByCourse(attendance);
-  const mergedRows = mergeAcademicData(assignments, attendanceByCourse);
-  requireMergedRows(mergedRows);
-  const csvOutput = formatAcademicCsv(mergedRows);
+  const workbook = createAcademicWorkbook(assignments, attendance);
 
-  await writeOutput(csvOutput);
+  await writeOutput(workbook);
 
   console.log(`Academic pipeline complete: ${path.relative(process.cwd(), outputPath)}`);
-  console.log(`Merged assignment rows: ${mergedRows.length}`);
+  console.log(`Canvas assignments: ${assignments.length}`);
   console.log(`Attendance records used: ${attendance.length}`);
   console.log(`Attendance date coverage: ${getDateCoverage(attendance)}`);
 }
