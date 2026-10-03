@@ -21,6 +21,9 @@ function normalizeAssignment(course, assignment) {
       submission?.workflow_state === "graded",
     excused: submission?.excused,
     grade: submission?.grade ?? null,
+    score: submission?.score ?? null,
+    pointsPossible: assignment.points_possible ?? null,
+    gradingType: assignment.grading_type ?? null,
   };
 }
 

@@ -20,11 +20,16 @@ const attendanceDateFormatter = new Intl.DateTimeFormat("en-US", {
 const sheetDefinitions = {
   Summary: [
     { header: "Course", key: "course", width: 22 },
-    { header: "Total Assignments", key: "totalAssignments", width: 18 },
+    { header: "Total Activities", key: "totalActivities", width: 18 },
     { header: "Submitted", key: "submitted", width: 12 },
     { header: "Pending", key: "pending", width: 12 },
     { header: "Excused", key: "excused", width: 12 },
     { header: "Graded", key: "graded", width: 12 },
+    {
+      header: "Canvas Attendance Grade",
+      key: "canvasAttendanceGrade",
+      width: 24,
+    },
     { header: "Attendance Records", key: "attendanceRecords", width: 20 },
     { header: "Present", key: "present", width: 11 },
     { header: "Absent", key: "absent", width: 11 },
@@ -34,9 +39,11 @@ const sheetDefinitions = {
   ],
   Assignments: [
     { header: "Course", key: "course", width: 22 },
-    { header: "Assignment", key: "assignment", width: 36 },
+    { header: "Assignment", key: "assignment", width: 42 },
     { header: "Due Date", key: "dueDate", width: 25 },
     { header: "Status", key: "status", width: 19 },
+    { header: "Score", key: "score", width: 12 },
+    { header: "Points Possible", key: "pointsPossible", width: 17 },
     { header: "Grade", key: "grade", width: 14 },
   ],
   Attendance: [
@@ -46,13 +53,13 @@ const sheetDefinitions = {
   ],
 };
 
+function isRollCallAssignment(assignment) {
+  return assignment.name.trim().toLowerCase() === "roll call attendance";
+}
+
 function getAssignmentStatus(assignment) {
   if (assignment.excused === true) {
     return "Excused";
-  }
-
-  if (assignment.name.trim().toLowerCase() === "roll call attendance") {
-    return "Attendance Record";
   }
 
   if (assignment.submitted === true) {
@@ -79,21 +86,31 @@ function formatAttendanceStatus(status) {
 }
 
 function buildAssignmentRows(assignments) {
-  return assignments.map((assignment) => ({
-    course: assignment.course,
-    assignment: assignment.name,
-    dueDate: formatDueDate(assignment.dueAt),
-    status: getAssignmentStatus(assignment),
-    grade: assignment.grade ?? null,
-  }));
+  return assignments
+    .filter((assignment) => !isRollCallAssignment(assignment))
+    .map((assignment) => ({
+      course: assignment.course,
+      assignment: assignment.name,
+      dueDate: formatDueDate(assignment.dueAt),
+      status: getAssignmentStatus(assignment),
+      score: assignment.score ?? null,
+      pointsPossible: assignment.pointsPossible ?? null,
+      grade: assignment.grade ?? null,
+    }));
 }
 
 function buildAttendanceRows(attendance) {
-  return attendance.map((record) => ({
-    course: record.courseCode,
-    classDate: formatAttendanceDate(record.classDate),
-    status: formatAttendanceStatus(record.status),
-  }));
+  return [...attendance]
+    .sort(
+      (left, right) =>
+        left.courseCode.localeCompare(right.courseCode) ||
+        left.classDate.localeCompare(right.classDate)
+    )
+    .map((record) => ({
+      course: record.courseCode,
+      classDate: formatAttendanceDate(record.classDate),
+      status: formatAttendanceStatus(record.status),
+    }));
 }
 
 function aggregateAttendanceByCourse(attendance) {
@@ -140,11 +157,12 @@ function buildSummaryRows(assignments, attendance) {
       const attendanceSummary = attendanceByCourse.get(assignment.courseId);
       row = {
         course: assignment.course,
-        totalAssignments: 0,
+        totalActivities: 0,
         submitted: 0,
         pending: 0,
         excused: 0,
         graded: 0,
+        canvasAttendanceGrade: null,
         attendanceRecords: attendanceSummary?.attendanceRecords ?? null,
         present: attendanceSummary?.present ?? null,
         absent: attendanceSummary?.absent ?? null,
@@ -159,7 +177,12 @@ function buildSummaryRows(assignments, attendance) {
       courseRows.set(assignment.courseId, row);
     }
 
-    row.totalAssignments += 1;
+    if (isRollCallAssignment(assignment)) {
+      row.canvasAttendanceGrade = assignment.grade ?? null;
+      continue;
+    }
+
+    row.totalActivities += 1;
 
     if (assignment.submitted === true) {
       row.submitted += 1;
@@ -225,7 +248,18 @@ function addReportSheet(workbook, name, rows) {
     });
 
     if (rowNumber > 1) {
-      row.height = 18;
+      if (name === "Assignments") {
+        const assignmentCell = row.getCell(2);
+        const assignmentLength = String(assignmentCell.value ?? "").length;
+        const estimatedLines = Math.max(1, Math.ceil(assignmentLength / 42));
+        assignmentCell.alignment = {
+          vertical: "middle",
+          wrapText: true,
+        };
+        row.height = Math.min(54, estimatedLines * 18);
+      } else {
+        row.height = 18;
+      }
     }
   });
 
@@ -254,5 +288,6 @@ module.exports = {
   buildAttendanceRows,
   buildSummaryRows,
   createAcademicWorkbook,
+  isRollCallAssignment,
   sheetDefinitions,
 };

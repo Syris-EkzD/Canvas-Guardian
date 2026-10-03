@@ -70,6 +70,8 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
           id: 301,
           name: "Submitted with timestamp",
           due_at: "2026-10-10T08:00:00Z",
+          points_possible: 25,
+          grading_type: "points",
           html_url: "https://canvas.example.edu/assignments/301",
           published: true,
           submission: {
@@ -77,6 +79,7 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
             workflow_state: "unsubmitted",
             excused: "raw-excused-value",
             grade: "A",
+            score: 23.5,
           },
         },
         {
@@ -145,6 +148,9 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
     submitted: true,
     excused: "raw-excused-value",
     grade: "A",
+    score: 23.5,
+    pointsPossible: 25,
+    gradingType: "points",
   });
   assert.equal(assignments[1].submitted, true);
   assert.equal(assignments[2].submitted, true);
@@ -153,6 +159,12 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
   assert.equal(assignments[3].excused, undefined);
   assert.equal(assignments[1].grade, null);
   assert.equal(assignments[3].grade, null);
+  assert.equal(assignments[1].score, null);
+  assert.equal(assignments[1].pointsPossible, null);
+  assert.equal(assignments[1].gradingType, null);
+  assert.equal(assignments[3].score, null);
+  assert.equal(assignments[3].pointsPossible, null);
+  assert.equal(assignments[3].gradingType, null);
 });
 
 test("getAllActiveCourseAssignments includes later course and assignment pages in order", async () => {
