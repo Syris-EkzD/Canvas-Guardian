@@ -215,6 +215,38 @@ test("summarizes activities separately from Roll Call and detailed attendance", 
   ]);
 });
 
+test("gives excused normal activities precedence over submitted in the summary", () => {
+  const excusedSubmittedAssignment = {
+    courseId: "9200",
+    course: "ENG 200-A",
+    name: "Excused but submitted essay",
+    submitted: true,
+    excused: true,
+    grade: "95",
+    score: 95,
+    pointsPossible: 100,
+  };
+
+  assert.deepEqual(buildSummaryRows([excusedSubmittedAssignment], []), [
+    {
+      course: "ENG 200-A",
+      totalActivities: 1,
+      submitted: 0,
+      pending: 0,
+      excused: 1,
+      graded: 1,
+      canvasAttendanceGrade: null,
+      attendanceRecords: null,
+      present: null,
+      absent: null,
+      late: null,
+      attendanceFrom: null,
+      attendanceThrough: null,
+    },
+  ]);
+  assert.equal(buildAssignmentRows([excusedSubmittedAssignment])[0].status, "Excused");
+});
+
 test("excludes every Roll Call state from academic activity counts", () => {
   const rollCallVariants = [
     {

@@ -201,13 +201,11 @@ function buildSummaryRows(assignments, attendance) {
 
     row.totalActivities += 1;
 
-    if (assignment.submitted === true) {
-      row.submitted += 1;
-    }
-
     if (assignment.excused === true) {
       row.excused += 1;
-    } else if (assignment.submitted !== true) {
+    } else if (assignment.submitted === true) {
+      row.submitted += 1;
+    } else {
       row.pending += 1;
     }
 

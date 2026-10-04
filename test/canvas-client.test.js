@@ -115,6 +115,35 @@ test("canvasGetAll follows only rel=next and preserves page order", async () => 
   }
 });
 
+test("canvasGetAll rejects foreign pagination URLs before fetching them", async () => {
+  const foreignUrl = "https://untrusted.example.test/api/v1/example?page=2";
+  const requests = [];
+
+  global.fetch = async (url, options) => {
+    requests.push({ url, options });
+    assert.equal(url, `${baseUrl}/api/v1/example`);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => [{ id: 1 }],
+      headers: {
+        get: (name) =>
+          name === "link" ? `<${foreignUrl}>; rel="next"` : null,
+      },
+    };
+  };
+
+  await assert.rejects(
+    canvasGetAll("/api/v1/example"),
+    new Error("Canvas pagination URL must use the configured Canvas origin")
+  );
+  assert.deepEqual(
+    requests.map((request) => request.url),
+    [`${baseUrl}/api/v1/example`]
+  );
+  assert.equal(requests.some((request) => request.url === foreignUrl), false);
+});
+
 test("canvasGetAll preserves the Canvas HTTP error", async () => {
   global.fetch = async () => ({ ok: false, status: 503 });
 
