@@ -15,6 +15,8 @@ function normalizeAssignment(course, assignment) {
     dueAt: assignment.due_at,
     htmlUrl: assignment.html_url,
     published: assignment.published,
+    submissionTypes: assignment.submission_types ?? [],
+    externalToolUrl: assignment.external_tool_tag_attributes?.url ?? null,
     submitted:
       Boolean(submission?.submitted_at) ||
       submission?.workflow_state === "submitted" ||

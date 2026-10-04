@@ -25,7 +25,7 @@ flowchart LR
 
 The tested standard Canvas APIs expose Roll Call as an external-tool assignment with an aggregate grade, but not its individual class-date attendance sessions. Those detailed records therefore come from the offline official Roll Call CSV. The importer selects only rows matching the current Canvas profile ID before normalization.
 
-Normal academic activities and attendance remain separate because they represent different record types and granularities. Roll Call Attendance is excluded from the Assignments sheet and from all academic activity counts. Its exact Canvas grade appears only as Canvas Attendance Grade in Summary.
+Normal academic activities and attendance remain separate because they represent different record types and granularities. Roll Call is identified from its Instructure external-tool/LTI metadata, not its editable assignment display name. It is excluded from the Assignments sheet and from all academic activity counts, while its exact Canvas grade appears only as Canvas Attendance Grade in Summary. Detailed attendance still comes from official offline Roll Call CSV exports.
 
 The Assignments sheet preserves Canvas Score, Points Possible, and formatted Grade values without calculating percentages or changing their meaning. Detailed Present, Absent, and Late records come only from the offline Roll Call CSV. Courses without detailed offline attendance remain in Summary with blank attendance cells, even when Canvas provides an aggregate Roll Call grade.
 

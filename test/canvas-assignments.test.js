@@ -74,6 +74,10 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
           grading_type: "points",
           html_url: "https://canvas.example.edu/assignments/301",
           published: true,
+          submission_types: ["external_tool"],
+          external_tool_tag_attributes: {
+            url: "https://rollcall-sin.instructure.com/launch",
+          },
           submission: {
             submitted_at: "2026-10-01T08:00:00Z",
             workflow_state: "unsubmitted",
@@ -145,6 +149,8 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
     dueAt: "2026-10-10T08:00:00Z",
     htmlUrl: "https://canvas.example.edu/assignments/301",
     published: true,
+    submissionTypes: ["external_tool"],
+    externalToolUrl: "https://rollcall-sin.instructure.com/launch",
     submitted: true,
     excused: "raw-excused-value",
     grade: "A",
@@ -162,9 +168,13 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
   assert.equal(assignments[1].score, null);
   assert.equal(assignments[1].pointsPossible, null);
   assert.equal(assignments[1].gradingType, null);
+  assert.deepEqual(assignments[1].submissionTypes, []);
+  assert.equal(assignments[1].externalToolUrl, null);
   assert.equal(assignments[3].score, null);
   assert.equal(assignments[3].pointsPossible, null);
   assert.equal(assignments[3].gradingType, null);
+  assert.deepEqual(assignments[3].submissionTypes, []);
+  assert.equal(assignments[3].externalToolUrl, null);
 });
 
 test("getAllActiveCourseAssignments includes later course and assignment pages in order", async () => {

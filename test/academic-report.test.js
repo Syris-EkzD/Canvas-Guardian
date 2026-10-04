@@ -8,6 +8,7 @@ const {
   buildSummaryRows,
   calculatePercentage,
   createAcademicWorkbook,
+  isRollCallAssignment,
   sheetDefinitions,
 } = require("../src/academic-report");
 
@@ -66,6 +67,8 @@ const assignments = [
     score: 78,
     pointsPossible: 100,
     gradingType: "percent",
+    submissionTypes: ["external_tool"],
+    externalToolUrl: "https://rollcall-sin.instructure.com/launch",
   },
   {
     id: "601",
@@ -92,6 +95,8 @@ const assignments = [
     score: 100,
     pointsPossible: 100,
     gradingType: "percent",
+    submissionTypes: ["external_tool"],
+    externalToolUrl: "https://rollcall-sin.instructure.com/launch",
   },
 ];
 
@@ -247,6 +252,54 @@ test("gives excused normal activities precedence over submitted in the summary",
   assert.equal(buildAssignmentRows([excusedSubmittedAssignment])[0].status, "Excused");
 });
 
+test("identifies Roll Call from Instructure external-tool metadata", () => {
+  for (const externalToolUrl of [
+    "https://rollcall-sin.instructure.com/launch",
+    "https://rollcall.instructure.com/launch",
+    "https://rollcall-us-east.instructure.com/launch",
+  ]) {
+    assert.equal(
+      isRollCallAssignment({
+        name: "Daily Attendance",
+        submissionTypes: ["external_tool"],
+        externalToolUrl,
+      }),
+      true
+    );
+  }
+
+  for (const assignment of [
+    {
+      name: "Roll Call Attendance",
+      submissionTypes: [],
+      externalToolUrl: null,
+    },
+    {
+      name: "Roll Call Attendance",
+      submissionTypes: ["external_tool"],
+      externalToolUrl: "https://lti.example.edu/launch",
+    },
+    {
+      name: "Roll Call Attendance",
+      submissionTypes: ["external_tool"],
+      externalToolUrl: "not a URL",
+    },
+    {
+      name: "Normal assignment",
+      submissionTypes: ["online_upload"],
+      externalToolUrl: null,
+    },
+    {
+      name: "Roll Call Attendance",
+      submissionTypes: ["external_tool"],
+      externalToolUrl:
+        "https://rollcall-sin.instructure.com.evil.example/launch",
+    },
+  ]) {
+    assert.equal(isRollCallAssignment(assignment), false);
+  }
+});
+
 test("excludes every Roll Call state from academic activity counts", () => {
   const rollCallVariants = [
     {
@@ -256,6 +309,8 @@ test("excludes every Roll Call state from academic activity counts", () => {
       submitted: false,
       excused: false,
       grade: null,
+      submissionTypes: ["external_tool"],
+      externalToolUrl: "https://rollcall-sin.instructure.com/launch",
     },
     {
       courseId: "9100",
@@ -264,6 +319,8 @@ test("excludes every Roll Call state from academic activity counts", () => {
       submitted: true,
       excused: true,
       grade: "60%",
+      submissionTypes: ["external_tool"],
+      externalToolUrl: "https://rollcall-sin.instructure.com/launch",
     },
   ];
 

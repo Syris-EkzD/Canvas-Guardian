@@ -54,7 +54,16 @@ const sheetDefinitions = {
 };
 
 function isRollCallAssignment(assignment) {
-  return assignment.name.trim().toLowerCase() === "roll call attendance";
+  if (!assignment.submissionTypes?.includes("external_tool")) {
+    return false;
+  }
+
+  try {
+    const { hostname } = new URL(assignment.externalToolUrl);
+    return /^rollcall(?:-[a-z0-9-]+)?\.instructure\.com$/.test(hostname);
+  } catch {
+    return false;
+  }
 }
 
 function getAssignmentStatus(assignment) {
