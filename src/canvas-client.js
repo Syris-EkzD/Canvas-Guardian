@@ -24,7 +24,18 @@ function getNextLink(linkHeader) {
   return nextPart?.match(/<([^>]+)>/)?.[1] || null;
 }
 
+function getCanvasPaginationUrl(nextLink, canvasBaseUrl) {
+  const nextUrl = new URL(nextLink, canvasBaseUrl);
+
+  if (nextUrl.origin !== canvasBaseUrl.origin) {
+    throw new Error("Canvas pagination URL must use the configured Canvas origin");
+  }
+
+  return nextUrl.href;
+}
+
 async function canvasGetAll(pathname) {
+  const canvasBaseUrl = new URL(process.env.CANVAS_BASE_URL);
   let url = `${process.env.CANVAS_BASE_URL}${pathname}`;
   const results = [];
 
@@ -42,7 +53,10 @@ async function canvasGetAll(pathname) {
     const page = await response.json();
     results.push(...page);
 
-    url = getNextLink(response.headers.get("link"));
+    const nextLink = getNextLink(response.headers.get("link"));
+    url = nextLink
+      ? getCanvasPaginationUrl(nextLink, canvasBaseUrl)
+      : null;
   }
 
   return results;

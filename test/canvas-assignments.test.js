@@ -70,12 +70,20 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
           id: 301,
           name: "Submitted with timestamp",
           due_at: "2026-10-10T08:00:00Z",
+          points_possible: 25,
+          grading_type: "points",
           html_url: "https://canvas.example.edu/assignments/301",
           published: true,
+          submission_types: ["external_tool"],
+          external_tool_tag_attributes: {
+            url: "https://rollcall-sin.instructure.com/launch",
+          },
           submission: {
             submitted_at: "2026-10-01T08:00:00Z",
             workflow_state: "unsubmitted",
             excused: "raw-excused-value",
+            grade: "A",
+            score: 23.5,
           },
         },
         {
@@ -135,19 +143,38 @@ test("getActiveCourseAssignments requests exact paths and normalizes in source o
   assert.deepEqual(assignments[0], {
     id: "301",
     key: "20:301",
+    courseId: "20",
     course: "CODE-20",
     name: "Submitted with timestamp",
     dueAt: "2026-10-10T08:00:00Z",
     htmlUrl: "https://canvas.example.edu/assignments/301",
     published: true,
+    submissionTypes: ["external_tool"],
+    externalToolUrl: "https://rollcall-sin.instructure.com/launch",
     submitted: true,
     excused: "raw-excused-value",
+    grade: "A",
+    score: 23.5,
+    pointsPossible: 25,
+    gradingType: "points",
   });
   assert.equal(assignments[1].submitted, true);
   assert.equal(assignments[2].submitted, true);
   assert.equal(assignments[2].course, "Course Ten");
   assert.equal(assignments[3].submitted, false);
   assert.equal(assignments[3].excused, undefined);
+  assert.equal(assignments[1].grade, null);
+  assert.equal(assignments[3].grade, null);
+  assert.equal(assignments[1].score, null);
+  assert.equal(assignments[1].pointsPossible, null);
+  assert.equal(assignments[1].gradingType, null);
+  assert.deepEqual(assignments[1].submissionTypes, []);
+  assert.equal(assignments[1].externalToolUrl, null);
+  assert.equal(assignments[3].score, null);
+  assert.equal(assignments[3].pointsPossible, null);
+  assert.equal(assignments[3].gradingType, null);
+  assert.deepEqual(assignments[3].submissionTypes, []);
+  assert.equal(assignments[3].externalToolUrl, null);
 });
 
 test("getAllActiveCourseAssignments includes later course and assignment pages in order", async () => {
@@ -208,5 +235,9 @@ test("getAllActiveCourseAssignments includes later course and assignment pages i
   assert.deepEqual(
     assignments.map((assignment) => assignment.course),
     ["ONE", "ONE", "TWO"]
+  );
+  assert.deepEqual(
+    assignments.map((assignment) => assignment.courseId),
+    ["1", "1", "2"]
   );
 });
