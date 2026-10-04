@@ -18,6 +18,30 @@ const requiredHeaders = [
 ];
 const supportedStatuses = new Set(["present", "absent", "late"]);
 
+function isValidClassDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+  const daysInMonth = [
+    31,
+    year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1];
+}
+
 function importAttendance(csvText, canvasUserId) {
   let rows;
 
@@ -68,14 +92,26 @@ function importAttendance(csvText, canvasUserId) {
 
     const normalized = {
       courseId: String(row[indexes["Course ID"]] ?? "").trim(),
+      sectionId: String(row[indexes["Section ID"]] ?? "").trim(),
       courseCode: String(row[indexes["Course Code"]] ?? "").trim(),
       classDate: String(row[indexes["Class Date"]] ?? "").trim(),
       status: String(row[indexes.Attendance] ?? "").trim().toLowerCase(),
     };
 
-    if (!normalized.courseId || !normalized.classDate || !normalized.status) {
+    if (
+      !normalized.courseId ||
+      !normalized.sectionId ||
+      !normalized.classDate ||
+      !normalized.status
+    ) {
       throw new Error(
         `Attendance CSV row ${rowIndex + 1} is missing required attendance data`
+      );
+    }
+
+    if (!isValidClassDate(normalized.classDate)) {
+      throw new Error(
+        `Attendance CSV row ${rowIndex + 1} has invalid class date`
       );
     }
 
@@ -88,13 +124,7 @@ function importAttendance(csvText, canvasUserId) {
     attendance.push(normalized);
   }
 
-  if (attendance.length === 0) {
-    throw new Error(
-      "Attendance CSV contains no records for the current Canvas user"
-    );
-  }
-
   return attendance;
 }
 
-module.exports = { importAttendance, requiredHeaders };
+module.exports = { importAttendance, isValidClassDate, requiredHeaders };

@@ -10,6 +10,7 @@ const header = requiredHeaders.join(",");
 
 function row({
   courseId = "9001",
+  sectionId = "9101",
   courseCode = "ART 123-X",
   studentId = "7001",
   studentName = "Student Alpha",
@@ -23,7 +24,7 @@ function row({
     `"${courseCode}"`,
     "Creative Studies",
     "Section X",
-    "9101",
+    sectionId,
     "SIS-SECTION-X",
     "8001",
     "Instructor Example",
@@ -52,18 +53,21 @@ test("imports quoted Roll Call values, filters by Canvas user, and normalizes st
   assert.deepEqual(importAttendance(csv, 7001), [
     {
       courseId: "9001",
+      sectionId: "9101",
       courseCode: "ART 123-X, Studio",
       classDate: "2042-03-04",
       status: "present",
     },
     {
       courseId: "9001",
+      sectionId: "9101",
       courseCode: "ART 123-X",
       classDate: "2042-03-11",
       status: "absent",
     },
     {
       courseId: "9001",
+      sectionId: "9101",
       courseCode: "ART 123-X",
       classDate: "2042-03-18",
       status: "late",
@@ -93,10 +97,10 @@ test("rejects missing required headers", () => {
   );
 });
 
-test("rejects a file with no records for the current Canvas user", () => {
-  assert.throws(
-    () => importAttendance(`${header}\n${row({ studentId: "7999" })}`, "7001"),
-    /no records for the current Canvas user/
+test("returns no records when a valid file has no rows for the current Canvas user", () => {
+  assert.deepEqual(
+    importAttendance(`${header}\n${row({ studentId: "7999" })}`, "7001"),
+    []
   );
 });
 
@@ -108,5 +112,22 @@ test("rejects unsupported attendance values for the current user", () => {
         "7001"
       ),
     /unsupported attendance status/
+  );
+});
+
+test("rejects malformed and impossible class dates for the current user", () => {
+  for (const classDate of ["not-a-date", "2026-13-01", "2026-02-30"]) {
+    assert.throws(
+      () => importAttendance(`${header}\n${row({ classDate })}`, "7001"),
+      /Attendance CSV row 2 has invalid class date/
+    );
+  }
+});
+
+test("accepts valid YYYY-MM-DD class dates", () => {
+  assert.equal(
+    importAttendance(`${header}\n${row({ classDate: "2026-02-28" })}`, "7001")[0]
+      .classDate,
+    "2026-02-28"
   );
 });

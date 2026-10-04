@@ -4,11 +4,11 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 
 const { createAcademicWorkbook } = require("./academic-report");
-const { importAttendance } = require("./attendance-import");
+const { loadAttendanceFromDirectory } = require("./attendance-files");
 const { getAllActiveCourseAssignments } = require("./canvas-assignments");
 const { canvasGet } = require("./canvas-client");
 
-const inputPath = path.resolve("data/input/attendance.csv");
+const attendanceDirectory = path.resolve("data/input/attendance");
 const outputPath = path.resolve("data/output/academic-report.xlsx");
 
 function validateConfiguration() {
@@ -49,15 +49,20 @@ async function run() {
   }
 
   const assignments = await getAllActiveCourseAssignments();
-  const csvText = await fs.readFile(inputPath, "utf8");
-  const attendance = importAttendance(csvText, profile.id);
+  const {
+    attendance,
+    filesProcessed,
+    duplicateRecordsRemoved,
+  } = await loadAttendanceFromDirectory(attendanceDirectory, profile.id);
   const workbook = createAcademicWorkbook(assignments, attendance);
 
   await writeOutput(workbook);
 
   console.log(`Academic pipeline complete: ${path.relative(process.cwd(), outputPath)}`);
   console.log(`Canvas assignments: ${assignments.length}`);
+  console.log(`Attendance CSV files processed: ${filesProcessed}`);
   console.log(`Attendance records used: ${attendance.length}`);
+  console.log(`Duplicate attendance records removed: ${duplicateRecordsRemoved}`);
   console.log(`Attendance date coverage: ${getDateCoverage(attendance)}`);
 }
 
