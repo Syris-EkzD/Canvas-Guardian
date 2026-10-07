@@ -14,6 +14,7 @@ const {
   setCalendarSyncEnabled,
 } = require("./monitoring-state");
 const { requireEnvironment } = require("./runtime-config");
+const { createTelegramClient } = require("./telegram-client");
 
 function createDatabase() {
   const db = new Database(path.join(__dirname, "..", "data", "horus.db"));
@@ -40,32 +41,6 @@ function setSetting(db, key, value) {
     VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(key, value);
-}
-
-async function telegramCall(telegramUrl, method, body) {
-  const response = await fetch(`${telegramUrl}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const result = await response.json();
-
-  if (!response.ok || !result.ok) {
-    throw new Error(
-      result.description || `Telegram returned HTTP ${response.status}`
-    );
-  }
-
-  return result.result;
-}
-
-async function sendMessage(telegramUrl, chatId, text) {
-  return telegramCall(telegramUrl, "sendMessage", {
-    chat_id: chatId,
-    text,
-    disable_web_page_preview: true,
-  });
 }
 
 function formatDate(dateString) {
@@ -417,7 +392,7 @@ async function handleMessage(message, runtime) {
 
     if (option === "on") {
       if (currentlyEnabled) {
-        await sendMessage(
+        await send(
           message.chat.id,
           "📅 Calendar synchronization is already 🟢 ENABLED."
         );
@@ -441,7 +416,7 @@ async function handleMessage(message, runtime) {
 
     if (option === "off") {
       if (!currentlyEnabled) {
-        await sendMessage(
+        await send(
           message.chat.id,
           "📅 Calendar synchronization is already 🔴 DISABLED."
         );
@@ -512,6 +487,7 @@ async function handleMessage(message, runtime) {
   const weekActivities = filterActivitiesDueWithinWeek(activities, now);
 
   await sendActivityList(
+    send,
     message.chat.id,
     `🗓 Due within 7 days: ${weekActivities.length}`,
     weekActivities
@@ -549,17 +525,16 @@ async function main() {
     "TELEGRAM_ALLOWED_CHAT_ID",
   ]);
   const db = createDatabase();
-  const telegramUrl = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}`;
-  const call = (method, body) => telegramCall(telegramUrl, method, body);
-  const send = (chatId, text) => sendMessage(telegramUrl, chatId, text);
-  let offset = await initializeOffset(db, call);
+  const telegram = createTelegramClient(config.TELEGRAM_BOT_TOKEN);
+  const send = telegram.sendMessage;
+  let offset = await initializeOffset(db, telegram.call);
 
   console.log("Horus Telegram command bot is listening.");
   console.log("Send /pending, /today, or /week in Telegram.");
 
   while (true) {
     try {
-      const updates = await call("getUpdates", {
+      const updates = await telegram.call("getUpdates", {
         offset,
         timeout: 30,
         allowed_updates: ["message"],

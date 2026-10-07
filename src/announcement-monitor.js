@@ -3,6 +3,7 @@ const Database = require("better-sqlite3");
 const { canvasGetAll } = require("./canvas-client");
 const { getMonitoringState } = require("./monitoring-state");
 const { requireEnvironment } = require("./runtime-config");
+const { createTelegramClient } = require("./telegram-client");
 
 function createDatabase() {
   const db = new Database(path.join(__dirname, "..", "data", "horus.db"));
@@ -72,25 +73,6 @@ function cleanText(html = "") {
     .trim();
 }
 
-async function sendTelegramMessage(botToken, chatId, text) {
-  const response = await fetch(
-    `https://api.telegram.org/bot${botToken}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        disable_web_page_preview: true,
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`Telegram returned HTTP ${response.status}`);
-  }
-}
-
 async function main() {
   require("dotenv").config({ quiet: true });
 
@@ -100,6 +82,7 @@ async function main() {
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_ALLOWED_CHAT_ID",
   ]);
+  const telegram = createTelegramClient(config.TELEGRAM_BOT_TOKEN);
   const db = createDatabase();
   const monitoringState = getMonitoringState(db);
 
@@ -131,8 +114,7 @@ async function main() {
       `Baseline saved: ${announcements.length} existing announcement(s). No old announcements were sent.`
     );
 
-    await sendTelegramMessage(
-      config.TELEGRAM_BOT_TOKEN,
+    await telegram.sendMessage(
       config.TELEGRAM_ALLOWED_CHAT_ID,
       `✅ Horus is now monitoring ${announcements.length} existing Canvas announcement(s). New announcements will be sent here.`
     );
@@ -159,8 +141,7 @@ async function main() {
   for (const announcement of newAnnouncements) {
     const preview = cleanText(announcement.message).slice(0, 700);
 
-    await sendTelegramMessage(
-      config.TELEGRAM_BOT_TOKEN,
+    await telegram.sendMessage(
       config.TELEGRAM_ALLOWED_CHAT_ID,
       [
         "📢 New Canvas announcement",
