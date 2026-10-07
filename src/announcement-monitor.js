@@ -2,7 +2,7 @@ require("dotenv").config({ quiet: true });
 
 const path = require("path");
 const Database = require("better-sqlite3");
-const { canvasGet } = require("./canvas-client");
+const { canvasGetAll } = require("./canvas-client");
 const { getMonitoringState } = require("./monitoring-state");
 
 const {
@@ -37,7 +37,7 @@ function setSetting(key, value) {
 }
 
 async function getAnnouncements() {
-  const courses = await canvasGet(
+  const courses = await canvasGetAll(
     "/api/v1/courses?enrollment_state=active&per_page=100"
   );
 
@@ -55,7 +55,7 @@ async function getAnnouncements() {
     parameters.append("context_codes[]", `course_${course.id}`);
   }
 
-  const announcements = await canvasGet(
+  const announcements = await canvasGetAll(
     `/api/v1/announcements?${parameters.toString()}`
   );
 
