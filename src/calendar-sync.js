@@ -1,5 +1,3 @@
-require("dotenv").config({ quiet: true });
-
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -12,10 +10,7 @@ const {
   getMonitoringState,
   getCalendarSyncEnabled,
 } = require("./monitoring-state");
-
-const {
-  GOOGLE_CALENDAR_ID,
-} = process.env;
+const { requireEnvironment } = require("./runtime-config");
 
 const projectRoot = path.join(__dirname, "..");
 
@@ -31,22 +26,24 @@ const tokenPath = path.join(
   "google-oauth-token.json"
 );
 
-const db = new Database(
-  path.join(projectRoot, "data", "horus.db")
-);
+function createDatabase() {
+  const db = new Database(path.join(projectRoot, "data", "horus.db"));
 
-db.pragma("journal_mode = WAL");
-db.pragma("busy_timeout = 5000");
+  db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS google_calendar_events (
-    assignment_key TEXT PRIMARY KEY,
-    google_event_id TEXT NOT NULL,
-    due_at TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    synced_at TEXT NOT NULL
-  );
-`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS google_calendar_events (
+      assignment_key TEXT PRIMARY KEY,
+      google_event_id TEXT NOT NULL,
+      due_at TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      synced_at TEXT NOT NULL
+    );
+  `);
+
+  return db;
+}
 
 function createGoogleCalendarClient() {
   const credentials = JSON.parse(
@@ -154,10 +151,14 @@ function createContentHash(event) {
 }
 
 async function main() {
-  if (!GOOGLE_CALENDAR_ID) {
-    throw new Error("GOOGLE_CALENDAR_ID is missing from .env");
-  }
+  require("dotenv").config({ quiet: true });
 
+  const config = requireEnvironment([
+    "CANVAS_BASE_URL",
+    "CANVAS_ACCESS_TOKEN",
+    "GOOGLE_CALENDAR_ID",
+  ]);
+  const db = createDatabase();
   const monitoringState = getMonitoringState(db);
 
   if (monitoringState !== "running") {
@@ -222,7 +223,7 @@ async function main() {
       if (existing) {
         try {
           await calendar.events.delete({
-            calendarId: GOOGLE_CALENDAR_ID,
+            calendarId: config.GOOGLE_CALENDAR_ID,
             eventId: existing.google_event_id,
           });
         } catch (error) {
@@ -255,7 +256,7 @@ async function main() {
 
     if (!existing) {
       const result = await calendar.events.insert({
-        calendarId: GOOGLE_CALENDAR_ID,
+        calendarId: config.GOOGLE_CALENDAR_ID,
         requestBody: event,
       });
 
@@ -288,7 +289,7 @@ async function main() {
 
     try {
       await calendar.events.update({
-        calendarId: GOOGLE_CALENDAR_ID,
+        calendarId: config.GOOGLE_CALENDAR_ID,
         eventId: existing.google_event_id,
         requestBody: event,
       });
@@ -314,7 +315,7 @@ async function main() {
       }
 
       const result = await calendar.events.insert({
-        calendarId: GOOGLE_CALENDAR_ID,
+        calendarId: config.GOOGLE_CALENDAR_ID,
         requestBody: event,
       });
 
@@ -340,11 +341,13 @@ async function main() {
   console.log(`Old unsynced assignments skipped: ${pastSkipped}`);
 }
 
-main().catch((error) => {
-  console.error(
-    "Calendar sync failed:",
-    error.response?.data?.error?.message || error.message
-  );
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(
+      "Calendar sync failed:",
+      error.response?.data?.error?.message || error.message
+    );
 
-  process.exit(1);
-});
+    process.exit(1);
+  });
+}

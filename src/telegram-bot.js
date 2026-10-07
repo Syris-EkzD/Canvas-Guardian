@@ -1,5 +1,3 @@
-require("dotenv").config({ quiet: true });
-
 const path = require("path");
 const Database = require("better-sqlite3");
 const { canvasGetAll } = require("./canvas-client");
@@ -15,29 +13,28 @@ const {
   getCalendarSyncEnabled,
   setCalendarSyncEnabled,
 } = require("./monitoring-state");
+const { requireEnvironment } = require("./runtime-config");
 
-const {
-  TELEGRAM_BOT_TOKEN,
-  TELEGRAM_ALLOWED_CHAT_ID,
-} = process.env;
+function createDatabase() {
+  const db = new Database(path.join(__dirname, "..", "data", "horus.db"));
 
-const db = new Database(path.join(__dirname, "..", "data", "horus.db"));
-const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS app_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-`);
+  return db;
+}
 
-function getSetting(key) {
+function getSetting(db, key) {
   return db
     .prepare("SELECT value FROM app_settings WHERE key = ?")
     .get(key)?.value;
 }
 
-function setSetting(key, value) {
+function setSetting(db, key, value) {
   db.prepare(`
     INSERT INTO app_settings (key, value)
     VALUES (?, ?)
@@ -45,7 +42,7 @@ function setSetting(key, value) {
   `).run(key, value);
 }
 
-async function telegramCall(method, body) {
+async function telegramCall(telegramUrl, method, body) {
   const response = await fetch(`${telegramUrl}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -63,8 +60,8 @@ async function telegramCall(method, body) {
   return result.result;
 }
 
-async function sendMessage(chatId, text) {
-  return telegramCall("sendMessage", {
+async function sendMessage(telegramUrl, chatId, text) {
+  return telegramCall(telegramUrl, "sendMessage", {
     chat_id: chatId,
     text,
     disable_web_page_preview: true,
@@ -95,9 +92,9 @@ async function getPendingActivities() {
   });
 }
 
-async function sendActivityList(chatId, title, activities) {
+async function sendActivityList(send, chatId, title, activities) {
   if (activities.length === 0) {
-    await sendMessage(chatId, `${title}\n\nNo matching activities found.`);
+    await send(chatId, `${title}\n\nNo matching activities found.`);
     return;
   }
 
@@ -115,7 +112,7 @@ async function sendActivityList(chatId, title, activities) {
     ].join("\n");
 
     if (message.length + block.length > 3800) {
-      await sendMessage(chatId, message.trim());
+      await send(chatId, message.trim());
       part += 1;
       message = `${title} — Part ${part}\n\n`;
     }
@@ -124,7 +121,7 @@ async function sendActivityList(chatId, title, activities) {
   }
 
   if (message.trim()) {
-    await sendMessage(chatId, message.trim());
+    await send(chatId, message.trim());
   }
 }
 
@@ -183,9 +180,9 @@ async function getRecentAnnouncements(limit = 10) {
     .slice(0, limit);
 }
 
-async function sendAnnouncementList(chatId, announcements) {
+async function sendAnnouncementList(send, chatId, announcements) {
   if (announcements.length === 0) {
-    await sendMessage(chatId, "📢 No announcements found.");
+    await send(chatId, "📢 No announcements found.");
     return;
   }
 
@@ -204,7 +201,7 @@ async function sendAnnouncementList(chatId, announcements) {
     ].join("\n");
 
     if (message.length + block.length > 3800) {
-      await sendMessage(chatId, message.trim());
+      await send(chatId, message.trim());
       part += 1;
       message = `📢 Latest announcements — Part ${part}\n\n`;
     }
@@ -213,16 +210,18 @@ async function sendAnnouncementList(chatId, announcements) {
   }
 
   if (message.trim()) {
-    await sendMessage(chatId, message.trim());
+    await send(chatId, message.trim());
   }
 }
 
-async function handleMessage(message) {
+async function handleMessage(message, runtime) {
+  const { db, allowedChatId, send } = runtime;
+
   if (!message?.text) {
     return;
   }
 
-  if (String(message.chat.id) !== String(TELEGRAM_ALLOWED_CHAT_ID)) {
+  if (String(message.chat.id) !== String(allowedChatId)) {
     console.log(`Ignored unauthorized chat: ${message.chat.id}`);
     return;
   }
@@ -239,7 +238,7 @@ async function handleMessage(message) {
     const previousState = getMonitoringState(db);
     setMonitoringState(db, "running");
 
-    await sendMessage(
+    await send(
       message.chat.id,
       previousState === "running"
         ? "✅ Horus is already running."
@@ -253,13 +252,13 @@ async function handleMessage(message) {
     const currentState = getMonitoringState(db);
 
     if (currentState === "stopped") {
-      await sendMessage(message.chat.id, "⏹ Horus is already stopped.");
+      await send(message.chat.id, "⏹ Horus is already stopped.");
       return;
     }
 
     setMonitoringState(db, "stopped");
 
-    await sendMessage(
+    await send(
       message.chat.id,
       [
         "⏹ Horus stopped.",
@@ -275,7 +274,7 @@ async function handleMessage(message) {
     const currentState = getMonitoringState(db);
 
     if (currentState === "stopped") {
-      await sendMessage(
+      await send(
         message.chat.id,
         "Horus is stopped. Use /start instead."
       );
@@ -284,13 +283,13 @@ async function handleMessage(message) {
     }
 
     if (currentState === "paused") {
-      await sendMessage(message.chat.id, "⏸ Horus is already paused.");
+      await send(message.chat.id, "⏸ Horus is already paused.");
       return;
     }
 
     setMonitoringState(db, "paused");
 
-    await sendMessage(
+    await send(
       message.chat.id,
       [
         "⏸ Horus paused.",
@@ -306,7 +305,7 @@ async function handleMessage(message) {
     const currentState = getMonitoringState(db);
 
     if (currentState === "stopped") {
-      await sendMessage(
+      await send(
         message.chat.id,
         "Horus is stopped. Use /start instead."
       );
@@ -315,13 +314,13 @@ async function handleMessage(message) {
     }
 
     if (currentState === "running") {
-      await sendMessage(message.chat.id, "✅ Horus is already running.");
+      await send(message.chat.id, "✅ Horus is already running.");
       return;
     }
 
     setMonitoringState(db, "running");
 
-    await sendMessage(
+    await send(
       message.chat.id,
       "▶️ Horus resumed. Automatic Canvas monitoring is active."
     );
@@ -345,7 +344,7 @@ async function handleMessage(message) {
       stopped: "Automatic Canvas monitoring is disabled.",
     };
 
-    await sendMessage(
+    await send(
       message.chat.id,
       [
         "🛡 Horus status",
@@ -366,7 +365,7 @@ async function handleMessage(message) {
   }
 
   if (command === "/help") {
-    await sendMessage(
+    await send(
       message.chat.id,
       [
         "🛡 Horus commands",
@@ -388,11 +387,11 @@ async function handleMessage(message) {
   }
 
   if (command === "/announcements") {
-    await sendMessage(message.chat.id, "Checking Canvas announcements…");
+    await send(message.chat.id, "Checking Canvas announcements…");
 
     const announcements = await getRecentAnnouncements(10);
 
-    await sendAnnouncementList(message.chat.id, announcements);
+    await sendAnnouncementList(send, message.chat.id, announcements);
     return;
   }
 
@@ -400,7 +399,7 @@ async function handleMessage(message) {
     const currentlyEnabled = getCalendarSyncEnabled(db);
 
     if (!option || option === "status") {
-      await sendMessage(
+      await send(
         message.chat.id,
         [
           "📅 Horus Calendar synchronization",
@@ -428,7 +427,7 @@ async function handleMessage(message) {
 
       setCalendarSyncEnabled(db, true);
 
-      await sendMessage(
+      await send(
         message.chat.id,
         [
           "📅 Calendar synchronization: 🟢 ENABLED",
@@ -452,7 +451,7 @@ async function handleMessage(message) {
 
       setCalendarSyncEnabled(db, false);
 
-      await sendMessage(
+      await send(
         message.chat.id,
         [
           "📅 Calendar synchronization: 🔴 DISABLED",
@@ -464,7 +463,7 @@ async function handleMessage(message) {
       return;
     }
 
-    await sendMessage(
+    await send(
       message.chat.id,
       "Use /calendar on, /calendar off, or /calendar status."
     );
@@ -473,7 +472,7 @@ async function handleMessage(message) {
   }
 
   if (!["/pending", "/today", "/week"].includes(command)) {
-    await sendMessage(
+    await send(
       message.chat.id,
       "Unknown command. Use /help to see the available commands."
     );
@@ -481,13 +480,14 @@ async function handleMessage(message) {
     return;
   }
 
-  await sendMessage(message.chat.id, "Checking Canvas…");
+  await send(message.chat.id, "Checking Canvas…");
 
   const activities = await getPendingActivities();
   const now = new Date();
 
   if (command === "/pending") {
     await sendActivityList(
+      send,
       message.chat.id,
       `📚 Pending activities: ${activities.length}`,
       activities
@@ -500,6 +500,7 @@ async function handleMessage(message) {
     const todayActivities = filterActivitiesDueToday(activities, now);
 
     await sendActivityList(
+      send,
       message.chat.id,
       `📅 Due today: ${todayActivities.length}`,
       todayActivities
@@ -517,14 +518,14 @@ async function handleMessage(message) {
   );
 }
 
-async function initializeOffset() {
-  const savedOffset = getSetting("telegram_update_offset");
+async function initializeOffset(db, call) {
+  const savedOffset = getSetting(db, "telegram_update_offset");
 
   if (savedOffset !== undefined) {
     return Number(savedOffset);
   }
 
-  const existingUpdates = await telegramCall("getUpdates", {
+  const existingUpdates = await call("getUpdates", {
     timeout: 0,
     allowed_updates: ["message"],
   });
@@ -534,19 +535,31 @@ async function initializeOffset() {
       ? Math.max(...existingUpdates.map((update) => update.update_id)) + 1
       : 0;
 
-  setSetting("telegram_update_offset", String(offset));
+  setSetting(db, "telegram_update_offset", String(offset));
   return offset;
 }
 
 async function main() {
-  let offset = await initializeOffset();
+  require("dotenv").config({ quiet: true });
+
+  const config = requireEnvironment([
+    "CANVAS_BASE_URL",
+    "CANVAS_ACCESS_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_ALLOWED_CHAT_ID",
+  ]);
+  const db = createDatabase();
+  const telegramUrl = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}`;
+  const call = (method, body) => telegramCall(telegramUrl, method, body);
+  const send = (chatId, text) => sendMessage(telegramUrl, chatId, text);
+  let offset = await initializeOffset(db, call);
 
   console.log("Horus Telegram command bot is listening.");
   console.log("Send /pending, /today, or /week in Telegram.");
 
   while (true) {
     try {
-      const updates = await telegramCall("getUpdates", {
+      const updates = await call("getUpdates", {
         offset,
         timeout: 30,
         allowed_updates: ["message"],
@@ -554,15 +567,19 @@ async function main() {
 
       for (const update of updates) {
         try {
-          await handleMessage(update.message);
+          await handleMessage(update.message, {
+            db,
+            allowedChatId: config.TELEGRAM_ALLOWED_CHAT_ID,
+            send,
+          });
         } catch (error) {
           console.error("Command failed:", error.message);
 
           if (
             String(update.message?.chat?.id) ===
-            String(TELEGRAM_ALLOWED_CHAT_ID)
+            String(config.TELEGRAM_ALLOWED_CHAT_ID)
           ) {
-            await sendMessage(
+            await send(
               update.message.chat.id,
               "Horus could not complete that command. Please try again."
             );
@@ -570,7 +587,7 @@ async function main() {
         }
 
         offset = update.update_id + 1;
-        setSetting("telegram_update_offset", String(offset));
+        setSetting(db, "telegram_update_offset", String(offset));
       }
     } catch (error) {
       console.error("Telegram polling failed:", error.message);
@@ -579,7 +596,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error("Telegram bot failed:", error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error("Telegram bot failed:", error.message);
+    process.exit(1);
+  });
+}
