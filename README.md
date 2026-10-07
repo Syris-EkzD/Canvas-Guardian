@@ -320,16 +320,13 @@ The GitHub Actions workflow runs `npm ci` followed by `npm test` on pushes to
 
 ## Project Status
 
-The repository is prepared for the upcoming `v0.3.0` release. The version is
-**not yet tagged or published as a GitHub Release**.
-
-After this release-readiness work is merged and CI passes, the exact resulting
-`main` commit can be deliberately tagged as `v0.3.0` and used to create the
-GitHub Release.
+The source version is `0.3.0`, representing the current `v0.3.0` release
+line. Git tags and GitHub Releases are publication artifacts managed separately
+from the source version.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the release history and
-[`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md) for the prepared release
-notes.
+[`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md) for the v0.3.0 release
+details.
 
 The older `v0.2.0-calendar-stable` name remains a documented historical
-milestone; no Git tag or GitHub Release artifact exists for it.
+milestone rather than an actual historical Git tag or GitHub Release artifact.

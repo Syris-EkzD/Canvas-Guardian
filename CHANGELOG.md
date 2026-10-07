@@ -2,9 +2,9 @@
 
 This project tracks meaningful release milestones rather than dumping commit history.
 
-## [0.3.0] - Unreleased
+## [0.3.0]
 
-Prepared for release as `v0.3.0`. The Git tag and GitHub Release will be created only after the release-readiness changes are merged and CI passes.
+Canvas Guardian 0.3.0 is the first deliberately tracked modern release line of the project.
 
 ### Added
 
@@ -23,7 +23,7 @@ Prepared for release as `v0.3.0`. The Git tag and GitHub Release will be created
 - Guardian consumers retrieve complete Canvas collections through paginated reads where completeness is required.
 - Executable runtime modules are safe to import without starting services or opening the production runtime database.
 - Pending assignment handling treats an activity as excused only when Canvas reports `excused === true`.
-- Package metadata now reflects the self-hosted application and the prepared `0.3.0` release.
+- Package metadata now reflects the self-hosted application and the `0.3.0` release line.
 
 ### Security and reliability
 
