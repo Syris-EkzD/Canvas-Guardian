@@ -1,22 +1,49 @@
 # Canvas Guardian
 
-Canvas Guardian is a self-hosted academic monitoring application designed to monitor Canvas LMS, send direct Telegram notifications, and synchronize assignment deadlines with Google Calendar.
+Canvas Guardian is a self-hosted academic companion for Canvas LMS. It now
+contains two related areas that share the same Canvas access and assignment
+normalization layer:
 
-It runs automatically on an Ubuntu server, so Canvas does not need to remain open in a browser.
+- **Guardian runtime** — monitors Canvas activity, sends Telegram notifications
+  and commands, synchronizes assignment deadlines with Google Calendar, and
+  keeps monitoring state in SQLite for a systemd-based self-hosted deployment.
+- **Academic Data Pipeline** — combines live Canvas assignment data with
+  official offline Roll Call CSV exports and generates a local Excel academic
+  report.
 
-## Features
+## Guardian Runtime
 
-- Monitors Canvas for new and upcoming activities
-- Tracks unfinished and submitted assignments
-- Sends activity and deadline alerts through Telegram
-- Lists pending, daily, and weekly activities
-- Retrieves recent Canvas announcements
-- Synchronizes deadlines with Google Calendar
-- Updates calendar events when deadlines change
-- Removes calendar events after assignments are submitted
-- Allows monitoring and calendar synchronization to be controlled through Telegram
-- Runs automatically using systemd services and timers
-- Prevents duplicate alerts and calendar events
+The Guardian runtime includes:
+
+- Canvas activity monitoring
+- Telegram notifications and commands
+- pending, today, and seven-day activity queries
+- deadline reminders
+- Canvas announcement monitoring and queries
+- Google Calendar synchronization
+- SQLite-backed monitoring and calendar state
+- systemd-based self-hosted operation
+
+## Academic Data Pipeline
+
+The Academic Data Pipeline:
+
+- fetches assignments from active Canvas courses through the shared Canvas
+  client and assignment normalization layer
+- identifies Roll Call from verified Instructure external-tool metadata rather
+  than the assignment display name
+- reads official Roll Call CSV exports from `data/input/attendance/*.csv`
+- filters attendance to the authenticated Canvas user before normalization
+- supports multiple attendance exports and multiple courses
+- validates class dates and `present`, `absent`, and `late` statuses
+- deduplicates overlapping attendance events by
+  `courseId + sectionId + classDate`
+- writes `data/output/academic-report.xlsx` with `Summary`, `Assignments`, and
+  `Attendance` sheets
+
+Missing attendance rows are never interpreted as Present or Absent. The
+detailed academic pipeline flow is documented in
+[`docs/academic-pipeline.md`](docs/academic-pipeline.md).
 
 ## Telegram Commands
 
@@ -38,43 +65,58 @@ It runs automatically on an Ubuntu server, so Canvas does not need to remain ope
 
 ## How It Works
 
-For assignment data, the main flow is:
+Canvas assignment data passes through one shared layer before the runtime and
+academic pipeline apply their own feature-specific behavior:
 
-```text
+~~~text
 Canvas LMS
     ↓
 src/canvas-client.js
     ↓
 src/canvas-assignments.js
     ↓
-Monitoring / Telegram / Calendar consumers
-    ↓
-SQLite / Telegram Bot HTTP API / Google Calendar
-```
+shared normalized Canvas data
+    ├── Guardian runtime consumers
+    │   ├── monitoring
+    │   ├── Telegram
+    │   └── Google Calendar
+    │
+    └── Academic Data Pipeline
+        ├── normal academic activities
+        ├── Canvas Roll Call aggregate grade
+        └── official offline Roll Call CSV attendance
+                ↓
+        data/output/academic-report.xlsx
+~~~
 
 `src/canvas-client.js` centralizes authenticated Canvas REST API requests.
-`canvasGet()` performs normal single-page GET requests, while `canvasGetAll()`
-follows Canvas `rel="next"` pagination links and combines the returned pages.
+`canvasGet()` handles normal single-page requests, while `canvasGetAll()`
+follows Canvas `rel="next"` pagination links and rejects pagination URLs from
+foreign origins before forwarding the Canvas access token.
 
-`src/canvas-assignments.js` retrieves active courses and their assignments, then
-normalizes assignment data into a reusable shape. Monitoring, Telegram queries,
-deadline reminders, and manual pending checks retain single-page retrieval.
-Google Calendar synchronization uses paginated retrieval. Each consumer keeps
-its own published, pending, due-date, submitted, and excused filtering instead
-of imposing one global filter in the shared assignment layer.
+`src/canvas-assignments.js` retrieves active courses and assignments, then
+normalizes them into a reusable shape. Guardian consumers apply their own
+published, pending, due-date, submitted, and excused filtering. Google Calendar
+synchronization and the Academic Data Pipeline use paginated assignment
+retrieval.
 
-Monitoring state, notification history, and calendar mappings are stored in the
-local SQLite database. Telegram notifications and commands use the Telegram Bot
-HTTP API directly, and calendar synchronization creates, updates, or removes
-Google Calendar events. The deployed personal instance uses systemd to schedule
-and run these processes.
+The Academic Data Pipeline combines those normalized Canvas assignments with
+separate official Roll Call CSV exports. Canvas supplies the Roll Call aggregate
+grade; detailed class-date attendance comes from the offline exports. See
+[`docs/academic-pipeline.md`](docs/academic-pipeline.md) for the detailed flow.
 
 ## Project Structure
 
-```text
+~~~text
 src/
   canvas-client.js
   canvas-assignments.js
+
+  attendance-import.js
+  attendance-files.js
+  academic-report.js
+  run-academic-pipeline.js
+
   activity-monitor.js
   announcement-monitor.js
   deadline-monitor.js
@@ -85,54 +127,66 @@ src/
 test/
   canvas-client.test.js
   canvas-assignments.test.js
+  attendance-import.test.js
+  attendance-files.test.js
+  academic-report.test.js
+
+docs/
+  academic-pipeline.md
 
 data/
+  input/
+    attendance/
+  output/
+
 secrets/
 .github/workflows/ci.yml
 .env.example
-```
+~~~
 
 - `canvas-client.js` and `canvas-assignments.js` provide the shared Canvas data
   layer.
-- The monitor, bot, and calendar files apply feature-specific behavior and send
-  results to SQLite, Telegram, or Google Calendar.
-- `monitoring-state.js` stores monitoring and calendar-sync settings in SQLite.
-- `test/` contains deterministic tests for the shared Canvas data layer.
-- `data/` and `secrets/` hold ignored local runtime data and private Google OAuth
-  files; `.env.example` documents environment configuration.
+- The Guardian monitor, bot, and calendar modules apply feature-specific
+  behavior and use SQLite, Telegram, or Google Calendar as needed.
+- The academic pipeline modules import, validate, normalize, deduplicate, and
+  report Canvas and Roll Call data.
+- `data/` and `secrets/` contain local runtime or private data that should not be
+  committed.
 
 ## Technology
 
 - Node.js
 - Canvas LMS REST API
-- Telegram Bot HTTP API through native Node `fetch`
+- Telegram Bot HTTP API through native `fetch`
 - Google Calendar API
 - SQLite through `better-sqlite3`
-- Environment configuration through `dotenv`
+- `dotenv`
+- `csv-parse`
+- ExcelJS
 - Node.js built-in test runner
 - GitHub Actions
-- systemd and Ubuntu Server for the deployed personal instance
+- systemd / Ubuntu Server
 
 ## Local Setup
 
 1. Clone the repository and enter it:
 
-   ```bash
+   ~~~bash
    git clone https://github.com/Syris-EkzD/Canvas-Guardian.git
    cd Canvas-Guardian
-   ```
+   ~~~
 
 2. Install dependencies:
 
-   ```bash
+   ~~~bash
    npm ci
-   ```
+   ~~~
 
 3. Copy the environment template and fill in the required values:
 
-   ```bash
+   ~~~bash
    cp .env.example .env
-   ```
+   ~~~
 
    Configure `CANVAS_BASE_URL`, `CANVAS_ACCESS_TOKEN`,
    `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_CHAT_ID`, and
@@ -146,49 +200,88 @@ secrets/
    After placing the Google Desktop app credentials file, the existing
    authorization script can create the OAuth token file:
 
-   ```bash
+   ~~~bash
    node src/authorize-google-calendar.js
-   ```
+   ~~~
 
 5. Run the automated tests:
 
-   ```bash
+   ~~~bash
    npm test
-   ```
+   ~~~
 
 Never commit `.env`, Canvas access tokens, Telegram bot tokens, Google OAuth
 credential or token files, or local SQLite databases.
 
+### Academic Data Pipeline
+
+1. Place one or more official Roll Call CSV exports in
+   `data/input/attendance/`.
+2. Ensure `.env` contains `CANVAS_BASE_URL` and `CANVAS_ACCESS_TOKEN`.
+3. Run:
+
+   ~~~bash
+   npm run academic:pipeline
+   ~~~
+
+4. Open the generated report at
+   `data/output/academic-report.xlsx`.
+
+The `.env` file remains private. Attendance CSV exports and generated academic
+reports are ignored by Git.
+
 ## Development and Testing
 
-Run the automated tests with:
+Run the deterministic test suite with:
 
-```bash
+~~~bash
 npm test
-```
+~~~
 
-The suite uses Node.js's built-in test runner and deterministic mocked Canvas
-HTTP responses, so it does not require live Canvas credentials or network
-requests. Current coverage focuses on the shared Canvas HTTP and assignment-data
-layers: URL and authorization behavior, Canvas HTTP errors, pagination,
-assignment normalization, submission-state interpretation, and source ordering.
-It does not cover Telegram, SQLite, Google Calendar integration, or complete
-runtime behavior.
+The suite uses Node.js's built-in test runner with mocked Canvas HTTP responses,
+temporary attendance files, and in-memory workbook checks. Current coverage
+includes:
+
+- authenticated Canvas requests and Canvas HTTP errors
+- pagination and same-origin pagination protection
+- assignment normalization and submitted/excused behavior
+- Roll Call identification from external-tool metadata
+- academic Summary logic and assignment percentage calculation
+- Roll Call CSV parsing and current-user attendance filtering
+- class-date and attendance-status validation
+- multi-file attendance ingestion and attendance deduplication
+- generated workbook schema
+
+This is deterministic unit/module coverage, not full integration or end-to-end
+coverage. The automated suite does not require live Canvas credentials,
+Telegram, Google Calendar, or real attendance exports.
 
 The GitHub Actions workflow runs `npm ci` followed by `npm test` on pushes to
-`main` and pull requests targeting `main`. It performs dependency installation
-and automated testing only; it does not deploy the application.
+`main` and pull requests targeting `main`. It does not deploy the application.
 
 ## Privacy and Security
 
-Canvas Guardian uses read-only Canvas access and never automatically submits or modifies schoolwork.
-
-API tokens, Google credentials, OAuth tokens, databases, and other private files are excluded from the Git repository through `.gitignore`.
+- Canvas credentials are isolated through `.env`; access tokens are not
+  committed.
+- Official attendance CSV exports and generated academic reports are ignored by
+  Git.
+- Roll Call exports are filtered to the authenticated Canvas user, and student
+  IDs are not retained in normalized attendance records.
+- Canvas pagination rejects foreign origins before authenticated follow-up
+  requests are sent.
+- Google OAuth credentials, tokens, and local SQLite databases remain excluded
+  from the repository.
 
 ## Project Status
 
-Current stable version: `v0.2.0-calendar-stable`
+The last documented stable version is `v0.2.0-calendar-stable`. This
+documentation pass does not create or move a release or Git tag.
 
-That stable version includes automatic Canvas monitoring, Telegram commands,
-and Google Calendar synchronization. Repository development may contain changes
-that have not yet been included in a stable release.
+`main` is ahead of that documented stable version and additionally contains:
+
+- the shared Canvas infrastructure refactor
+- automated tests and GitHub Actions CI
+- the Academic Data Pipeline MVP
+
+`main` should not be treated as a newly tagged stable release unless a future
+release/tag is explicitly created.
