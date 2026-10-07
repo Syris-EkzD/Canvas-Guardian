@@ -20,7 +20,8 @@ function normalizeAssignment(course, assignment) {
     submitted:
       Boolean(submission?.submitted_at) ||
       submission?.workflow_state === "submitted" ||
-      submission?.workflow_state === "graded",
+      (submission?.workflow_state === "graded" &&
+        submission?.missing !== true),
     excused: submission?.excused,
     grade: submission?.grade ?? null,
     score: submission?.score ?? null,

@@ -5,6 +5,7 @@ const {
   getActiveCourseAssignments,
   getAllActiveCourseAssignments,
 } = require("../src/canvas-assignments");
+const { isPendingAssignment } = require("../src/activity-logic");
 
 const baseUrl = "https://canvas.example.edu";
 const accessToken = "test-access-token";
@@ -240,4 +241,105 @@ test("getAllActiveCourseAssignments includes later course and assignment pages i
     assignments.map((assignment) => assignment.courseId),
     ["1", "1", "2"]
   );
+});
+
+test("submission normalization preserves graded work while keeping graded missing work pending", async () => {
+  const assignmentsPath =
+    "/api/v1/courses/1/assignments?include[]=submission&order_by=due_at&per_page=100";
+
+  const cases = [
+    {
+      id: 1,
+      name: "Timestamp evidence",
+      submission: {
+        submitted_at: "2026-10-01T08:00:00Z",
+        workflow_state: "unsubmitted",
+        missing: true,
+      },
+      expected: true,
+    },
+    {
+      id: 2,
+      name: "Submitted workflow",
+      submission: {
+        submitted_at: null,
+        workflow_state: "submitted",
+        missing: true,
+      },
+      expected: true,
+    },
+    {
+      id: 3,
+      name: "Graded not missing",
+      submission: {
+        submitted_at: null,
+        workflow_state: "graded",
+        missing: false,
+      },
+      expected: true,
+    },
+    {
+      id: 4,
+      name: "Graded missing state absent",
+      submission: {
+        submitted_at: null,
+        workflow_state: "graded",
+      },
+      expected: true,
+    },
+    {
+      id: 5,
+      name: "Graded but missing",
+      submission: {
+        submitted_at: null,
+        workflow_state: "graded",
+        missing: true,
+      },
+      expected: false,
+    },
+    {
+      id: 6,
+      name: "Ordinary unsubmitted",
+      submission: {
+        submitted_at: null,
+        workflow_state: "unsubmitted",
+        missing: false,
+      },
+      expected: false,
+    },
+  ];
+
+  global.fetch = async (url) => {
+    if (url === `${baseUrl}${coursesPath}`) {
+      return response([{ id: 1, course_code: "ONE", name: "One" }]);
+    }
+
+    if (url === `${baseUrl}${assignmentsPath}`) {
+      return response(
+        cases.map(({ id, name, submission }) => ({
+          id,
+          name,
+          published: true,
+          due_at: "2026-10-20T08:00:00Z",
+          submission,
+        }))
+      );
+    }
+
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const assignments = await getActiveCourseAssignments();
+
+  assert.deepEqual(
+    assignments.map((assignment) => assignment.submitted),
+    cases.map(({ expected }) => expected)
+  );
+
+  const gradedMissing = assignments.find(
+    (assignment) => assignment.name === "Graded but missing"
+  );
+
+  assert.equal(gradedMissing.submitted, false);
+  assert.equal(isPendingAssignment(gradedMissing), true);
 });
