@@ -1,14 +1,17 @@
 {
   "name": "canvas-guardian",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Self-hosted Canvas LMS guardian with Telegram monitoring, Google Calendar sync, and an academic data pipeline.",
   "scripts": {
+    "guardian:activity": "node src/activity-monitor.js",
+    "guardian:announcements": "node src/announcement-monitor.js",
+    "guardian:deadlines": "node src/deadline-monitor.js",
+    "guardian:telegram": "node src/telegram-bot.js",
+    "guardian:calendar": "node src/calendar-sync.js",
     "academic:pipeline": "node src/run-academic-pipeline.js",
     "test": "node --test test/*.test.js"
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
   "dependencies": {
     "better-sqlite3": "^11.10.0",
