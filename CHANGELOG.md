@@ -15,6 +15,7 @@ Canvas Guardian 0.3.1 is a focused correctness, privacy, and Calendar recovery m
 - Calendar update recovery treats Google 404 and 410 responses consistently and validates replacement event IDs before saving mappings.
 - Announcement monitoring safely handles zero active courses without issuing an invalid announcements request.
 - Legacy pending-activity and announcement diagnostic scripts use complete Canvas pagination.
+- Updated `better-sqlite3` from the 11.x native-addon line to the N-API-based 13.0.3 line for reliable Node 24 runtime/test compatibility.
 
 ### Testing
 
