@@ -136,6 +136,7 @@ test/
   activity-logic.test.js
   deadline-monitor.test.js
   runtime-config.test.js
+  runtime-import-safety.test.js
   telegram-client.test.js
 
 docs/
