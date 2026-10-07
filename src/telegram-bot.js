@@ -5,6 +5,11 @@ const Database = require("better-sqlite3");
 const { canvasGetAll } = require("./canvas-client");
 const { getAllActiveCourseAssignments } = require("./canvas-assignments");
 const {
+  filterActivitiesDueToday,
+  filterActivitiesDueWithinWeek,
+  filterPendingAssignments,
+} = require("./activity-logic");
+const {
   getMonitoringState,
   setMonitoringState,
   getCalendarSyncEnabled,
@@ -78,29 +83,9 @@ function formatDate(dateString) {
   });
 }
 
-function getManilaDateKey(date) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-
-  const values = Object.fromEntries(
-    parts.map((part) => [part.type, part.value])
-  );
-
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
 async function getPendingActivities() {
   const assignments = await getAllActiveCourseAssignments();
-  const activities = assignments.filter(
-    (assignment) =>
-      assignment.published &&
-      !assignment.submitted &&
-      assignment.excused !== true
-  );
+  const activities = filterPendingAssignments(assignments);
 
   return activities.sort((a, b) => {
     if (!a.dueAt) return 1;
@@ -512,13 +497,7 @@ async function handleMessage(message) {
   }
 
   if (command === "/today") {
-    const todayKey = getManilaDateKey(now);
-
-    const todayActivities = activities.filter(
-      (activity) =>
-        activity.dueAt &&
-        getManilaDateKey(new Date(activity.dueAt)) === todayKey
-    );
+    const todayActivities = filterActivitiesDueToday(activities, now);
 
     await sendActivityList(
       message.chat.id,
@@ -529,19 +508,7 @@ async function handleMessage(message) {
     return;
   }
 
-  const sevenDaysFromNow = new Date(
-    now.getTime() + 7 * 24 * 60 * 60 * 1000
-  );
-
-  const weekActivities = activities.filter((activity) => {
-    if (!activity.dueAt) {
-      return false;
-    }
-
-    const dueDate = new Date(activity.dueAt);
-
-    return dueDate >= now && dueDate <= sevenDaysFromNow;
-  });
+  const weekActivities = filterActivitiesDueWithinWeek(activities, now);
 
   await sendActivityList(
     message.chat.id,

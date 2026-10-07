@@ -3,6 +3,7 @@ require("dotenv").config({ quiet: true });
 const path = require("path");
 const Database = require("better-sqlite3");
 const { getAllActiveCourseAssignments } = require("./canvas-assignments");
+const { filterPendingAssignments } = require("./activity-logic");
 const { getMonitoringState } = require("./monitoring-state");
 
 const {
@@ -49,12 +50,7 @@ function formatDate(dateString) {
 async function getPendingActivities() {
   const assignments = await getAllActiveCourseAssignments();
 
-  return assignments.filter(
-    (assignment) =>
-      assignment.published &&
-      !assignment.submitted &&
-      !assignment.excused
-  );
+  return filterPendingAssignments(assignments);
 }
 
 async function sendTelegramMessage(text) {

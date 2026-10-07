@@ -3,6 +3,7 @@ require("dotenv").config({ quiet: true });
 const path = require("path");
 const Database = require("better-sqlite3");
 const { getAllActiveCourseAssignments } = require("./canvas-assignments");
+const { filterPendingAssignments } = require("./activity-logic");
 const { getMonitoringState } = require("./monitoring-state");
 
 const {
@@ -33,15 +34,11 @@ function formatDate(dateString) {
 async function getPendingActivities() {
   const assignments = await getAllActiveCourseAssignments();
 
-  return assignments.filter(
-    (assignment) =>
-      assignment.published &&
-      assignment.dueAt &&
-      !assignment.submitted &&
-      assignment.excused !== true
-  ).sort(
-    (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()
-  );
+  return filterPendingAssignments(assignments)
+    .filter((assignment) => assignment.dueAt)
+    .sort(
+      (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()
+    );
 }
 
 async function sendTelegramMessage(text) {
@@ -64,8 +61,9 @@ async function sendTelegramMessage(text) {
   }
 }
 
-function getReminderType(dueAt) {
-  const millisecondsRemaining = new Date(dueAt).getTime() - Date.now();
+function getReminderType(dueAt, now = Date.now()) {
+  const millisecondsRemaining =
+    new Date(dueAt).getTime() - new Date(now).getTime();
   const hoursRemaining = millisecondsRemaining / (1000 * 60 * 60);
 
   if (hoursRemaining <= 0) {
