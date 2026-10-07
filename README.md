@@ -136,10 +136,15 @@ test/
   activity-logic.test.js
   deadline-monitor.test.js
   runtime-config.test.js
+  runtime-import-safety.test.js
   telegram-client.test.js
 
 docs/
   academic-pipeline.md
+  releases/
+    v0.3.0.md
+
+CHANGELOG.md
 
 data/
   input/
@@ -198,9 +203,15 @@ secrets/
    cp .env.example .env
    ~~~
 
-   Configure `CANVAS_BASE_URL`, `CANVAS_ACCESS_TOKEN`,
-   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_CHAT_ID`, and
-   `GOOGLE_CALENDAR_ID` in `.env`.
+   Configure only the values required by the features you use:
+
+   - **Canvas access:** `CANVAS_BASE_URL` and `CANVAS_ACCESS_TOKEN` are
+     required by Canvas-backed Guardian services and the Academic Data Pipeline.
+   - **Telegram runtime:** `TELEGRAM_BOT_TOKEN` and
+     `TELEGRAM_ALLOWED_CHAT_ID` are required by the Guardian notification
+     monitors and Telegram command bot.
+   - **Google Calendar:** `GOOGLE_CALENDAR_ID` is required only for Calendar
+     synchronization.
 
 4. To use Google Calendar synchronization, provide these private files:
 
@@ -222,6 +233,21 @@ secrets/
 
 Never commit `.env`, Canvas access tokens, Telegram bot tokens, Google OAuth
 credential or token files, or local SQLite databases.
+
+### Guardian Runtime Commands
+
+The supported executable Guardian services can be run directly through npm:
+
+~~~bash
+npm run guardian:activity
+npm run guardian:announcements
+npm run guardian:deadlines
+npm run guardian:telegram
+npm run guardian:calendar
+~~~
+
+These commands expose the existing runtime entry points without replacing the
+systemd-based automated deployment used by the self-hosted instance.
 
 ### Academic Data Pipeline
 
@@ -265,6 +291,8 @@ includes:
 - deterministic deadline reminder thresholds
 - runtime configuration validation
 - Telegram request construction and error handling
+- runtime import safety without production secrets, service startup, external
+  requests, or SQLite initialization
 
 Runtime scripts keep startup-only initialization behind direct-execution guards,
 so importing tested logic does not start services or open the production runtime
@@ -292,14 +320,13 @@ The GitHub Actions workflow runs `npm ci` followed by `npm test` on pushes to
 
 ## Project Status
 
-The last documented stable version is `v0.2.0-calendar-stable`. This
-documentation pass does not create or move a release or Git tag.
+The source version is `0.3.0`, representing the current `v0.3.0` release
+line. Git tags and GitHub Releases are publication artifacts managed separately
+from the source version.
 
-`main` is ahead of that documented stable version and additionally contains:
+See [`CHANGELOG.md`](CHANGELOG.md) for the release history and
+[`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md) for the v0.3.0 release
+details.
 
-- the shared Canvas infrastructure refactor
-- automated tests and GitHub Actions CI
-- the Academic Data Pipeline MVP
-
-`main` should not be treated as a newly tagged stable release unless a future
-release/tag is explicitly created.
+The older `v0.2.0-calendar-stable` name remains a documented historical
+milestone rather than an actual historical Git tag or GitHub Release artifact.
