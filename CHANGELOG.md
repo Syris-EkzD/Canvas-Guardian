@@ -2,6 +2,27 @@
 
 This project tracks meaningful release milestones rather than dumping commit history.
 
+## [0.3.1]
+
+Canvas Guardian 0.3.1 is a focused correctness, privacy, and Calendar recovery maintenance release.
+
+### Fixed
+
+- Canvas submissions that are graded by a missing-submission policy remain pending when Canvas explicitly reports `missing: true` and there is no affirmative submission evidence.
+- Malformed attendance CSV parser failures no longer expose raw parser messages or arbitrary field contents.
+- Calendar reconciliation removes Guardian-managed events and mappings when assignments disappear from a complete successful Canvas snapshot, become unpublished, lose their due date, or become submitted.
+- Calendar creation retries recover Guardian-managed events by private assignment metadata before inserting, reducing duplicate/orphan events after ambiguous insert failures.
+- Calendar update recovery treats Google 404 and 410 responses consistently and validates replacement event IDs before saving mappings.
+- Announcement monitoring safely handles zero active courses without issuing an invalid announcements request.
+- Legacy pending-activity and announcement diagnostic scripts use complete Canvas pagination.
+
+### Testing
+
+- Added regression coverage for graded-but-missing submission semantics and pending eligibility.
+- Added attendance parser privacy regression coverage with fake malformed data.
+- Added mocked Calendar reconciliation, deletion, recovery, duplicate-prevention, unchanged/update, and past-due behavior coverage.
+- Added zero-active-course announcement regression coverage.
+
 ## [0.3.0]
 
 Canvas Guardian 0.3.0 is the first deliberately tracked modern release line of the project.

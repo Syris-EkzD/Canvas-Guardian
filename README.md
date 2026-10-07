@@ -143,6 +143,7 @@ docs/
   academic-pipeline.md
   releases/
     v0.3.0.md
+    v0.3.1.md
 
 CHANGELOG.md
 
@@ -320,12 +321,12 @@ The GitHub Actions workflow runs `npm ci` followed by `npm test` on pushes to
 
 ## Project Status
 
-The source version is `0.3.0`, representing the current `v0.3.0` release
+The source version is `0.3.1`, representing the current `v0.3.1` release
 line. Git tags and GitHub Releases are publication artifacts managed separately
 from the source version.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the release history and
-[`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md) for the v0.3.0 release
+[`docs/releases/v0.3.1.md`](docs/releases/v0.3.1.md) for the v0.3.1 release
 details.
 
 The older `v0.2.0-calendar-stable` name remains a documented historical
