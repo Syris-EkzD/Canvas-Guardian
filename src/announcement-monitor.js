@@ -35,10 +35,14 @@ function setSetting(db, key, value) {
   `).run(key, value);
 }
 
-async function getAnnouncements() {
-  const courses = await canvasGetAll(
+async function getAnnouncementsWith(canvasRequest) {
+  const courses = await canvasRequest(
     "/api/v1/courses?enrollment_state=active&per_page=100"
   );
+
+  if (courses.length === 0) {
+    return [];
+  }
 
   const courseNames = new Map(
     courses.map((course) => [
@@ -54,7 +58,7 @@ async function getAnnouncements() {
     parameters.append("context_codes[]", `course_${course.id}`);
   }
 
-  const announcements = await canvasGetAll(
+  const announcements = await canvasRequest(
     `/api/v1/announcements?${parameters.toString()}`
   );
 
@@ -62,6 +66,10 @@ async function getAnnouncements() {
     ...announcement,
     courseName: courseNames.get(announcement.context_code) || "Canvas course",
   }));
+}
+
+function getAnnouncements() {
+  return getAnnouncementsWith(canvasGetAll);
 }
 
 function cleanText(html = "") {
@@ -167,3 +175,5 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
+module.exports = { getAnnouncementsWith };

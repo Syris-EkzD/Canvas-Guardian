@@ -1,11 +1,16 @@
 require("dotenv").config({ quiet: true });
 
-const { canvasGet } = require("./canvas-client");
+const { canvasGetAll } = require("./canvas-client");
 
 async function main() {
-  const courses = await canvasGet(
+  const courses = await canvasGetAll(
     "/api/v1/courses?enrollment_state=active&per_page=100"
   );
+
+  if (courses.length === 0) {
+    console.log("Found 0 announcement(s).\n");
+    return;
+  }
 
   const courseNames = new Map(
     courses.map((course) => [
@@ -21,7 +26,7 @@ async function main() {
     parameters.append("context_codes[]", `course_${course.id}`);
   }
 
-  const announcements = await canvasGet(
+  const announcements = await canvasGetAll(
     `/api/v1/announcements?${parameters.toString()}`
   );
 

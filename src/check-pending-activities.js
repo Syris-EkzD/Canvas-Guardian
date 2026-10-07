@@ -1,6 +1,6 @@
 require("dotenv").config({ quiet: true });
 
-const { getActiveCourseAssignments } = require("./canvas-assignments");
+const { getAllActiveCourseAssignments } = require("./canvas-assignments");
 
 function formatDate(dateString) {
   if (!dateString) {
@@ -15,7 +15,7 @@ function formatDate(dateString) {
 }
 
 async function main() {
-  const assignments = await getActiveCourseAssignments();
+  const assignments = await getAllActiveCourseAssignments();
   const pendingActivities = assignments.filter(
     (assignment) =>
       assignment.published &&
