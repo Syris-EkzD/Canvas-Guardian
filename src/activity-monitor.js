@@ -2,7 +2,7 @@ require("dotenv").config({ quiet: true });
 
 const path = require("path");
 const Database = require("better-sqlite3");
-const { getActiveCourseAssignments } = require("./canvas-assignments");
+const { getAllActiveCourseAssignments } = require("./canvas-assignments");
 const { getMonitoringState } = require("./monitoring-state");
 
 const {
@@ -47,7 +47,7 @@ function formatDate(dateString) {
 }
 
 async function getPendingActivities() {
-  const assignments = await getActiveCourseAssignments();
+  const assignments = await getAllActiveCourseAssignments();
 
   return assignments.filter(
     (assignment) =>

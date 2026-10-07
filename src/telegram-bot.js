@@ -2,8 +2,8 @@ require("dotenv").config({ quiet: true });
 
 const path = require("path");
 const Database = require("better-sqlite3");
-const { canvasGet } = require("./canvas-client");
-const { getActiveCourseAssignments } = require("./canvas-assignments");
+const { canvasGetAll } = require("./canvas-client");
+const { getAllActiveCourseAssignments } = require("./canvas-assignments");
 const {
   getMonitoringState,
   setMonitoringState,
@@ -94,7 +94,7 @@ function getManilaDateKey(date) {
 }
 
 async function getPendingActivities() {
-  const assignments = await getActiveCourseAssignments();
+  const assignments = await getAllActiveCourseAssignments();
   const activities = assignments.filter(
     (assignment) =>
       assignment.published &&
@@ -155,7 +155,7 @@ function cleanText(html = "") {
 }
 
 async function getRecentAnnouncements(limit = 10) {
-  const courses = await canvasGet(
+  const courses = await canvasGetAll(
     "/api/v1/courses?enrollment_state=active&per_page=100"
   );
 
@@ -177,7 +177,7 @@ async function getRecentAnnouncements(limit = 10) {
     parameters.append("context_codes[]", `course_${course.id}`);
   }
 
-  const announcements = await canvasGet(
+  const announcements = await canvasGetAll(
     `/api/v1/announcements?${parameters.toString()}`
   );
 
