@@ -117,12 +117,15 @@ src/
   academic-report.js
   run-academic-pipeline.js
 
+  activity-logic.js
   activity-monitor.js
   announcement-monitor.js
   deadline-monitor.js
+  telegram-client.js
   telegram-bot.js
   calendar-sync.js
   monitoring-state.js
+  runtime-config.js
 
 test/
   canvas-client.test.js
@@ -130,6 +133,10 @@ test/
   attendance-import.test.js
   attendance-files.test.js
   academic-report.test.js
+  activity-logic.test.js
+  deadline-monitor.test.js
+  runtime-config.test.js
+  telegram-client.test.js
 
 docs/
   academic-pipeline.md
@@ -148,6 +155,9 @@ secrets/
   layer.
 - The Guardian monitor, bot, and calendar modules apply feature-specific
   behavior and use SQLite, Telegram, or Google Calendar as needed.
+- `activity-logic.js`, `runtime-config.js`, and `telegram-client.js` keep shared
+  runtime rules, startup validation, and Telegram HTTP behavior small and
+  independently testable.
 - The academic pipeline modules import, validate, normalize, deduplicate, and
   report Canvas and Roll Call data.
 - `data/` and `secrets/` contain local runtime or private data that should not be
@@ -251,6 +261,14 @@ includes:
 - class-date and attendance-status validation
 - multi-file attendance ingestion and attendance deduplication
 - generated workbook schema
+- Guardian pending/excused semantics and Manila date selection
+- deterministic deadline reminder thresholds
+- runtime configuration validation
+- Telegram request construction and error handling
+
+Runtime scripts keep startup-only initialization behind direct-execution guards,
+so importing tested logic does not start services or open the production runtime
+database.
 
 This is deterministic unit/module coverage, not full integration or end-to-end
 coverage. The automated suite does not require live Canvas credentials,

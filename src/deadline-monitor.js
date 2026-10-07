@@ -1,26 +1,26 @@
-require("dotenv").config({ quiet: true });
-
 const path = require("path");
 const Database = require("better-sqlite3");
 const { getAllActiveCourseAssignments } = require("./canvas-assignments");
+const { filterPendingAssignments } = require("./activity-logic");
 const { getMonitoringState } = require("./monitoring-state");
+const { requireEnvironment } = require("./runtime-config");
+const { createTelegramClient } = require("./telegram-client");
 
-const {
-  TELEGRAM_BOT_TOKEN,
-  TELEGRAM_ALLOWED_CHAT_ID,
-} = process.env;
+function createDatabase() {
+  const db = new Database(path.join(__dirname, "..", "data", "horus.db"));
 
-const db = new Database(path.join(__dirname, "..", "data", "horus.db"));
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS deadline_reminders (
+      assignment_key TEXT NOT NULL,
+      due_at TEXT NOT NULL,
+      reminder_type TEXT NOT NULL,
+      sent_at TEXT NOT NULL,
+      PRIMARY KEY (assignment_key, due_at, reminder_type)
+    );
+  `);
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS deadline_reminders (
-    assignment_key TEXT NOT NULL,
-    due_at TEXT NOT NULL,
-    reminder_type TEXT NOT NULL,
-    sent_at TEXT NOT NULL,
-    PRIMARY KEY (assignment_key, due_at, reminder_type)
-  );
-`);
+  return db;
+}
 
 function formatDate(dateString) {
   return new Date(dateString).toLocaleString("en-PH", {
@@ -33,39 +33,16 @@ function formatDate(dateString) {
 async function getPendingActivities() {
   const assignments = await getAllActiveCourseAssignments();
 
-  return assignments.filter(
-    (assignment) =>
-      assignment.published &&
-      assignment.dueAt &&
-      !assignment.submitted &&
-      assignment.excused !== true
-  ).sort(
-    (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()
-  );
+  return filterPendingAssignments(assignments)
+    .filter((assignment) => assignment.dueAt)
+    .sort(
+      (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()
+    );
 }
 
-async function sendTelegramMessage(text) {
-  const response = await fetch(
-    `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_ALLOWED_CHAT_ID,
-        text,
-        disable_web_page_preview: true,
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Telegram returned HTTP ${response.status}: ${body}`);
-  }
-}
-
-function getReminderType(dueAt) {
-  const millisecondsRemaining = new Date(dueAt).getTime() - Date.now();
+function getReminderType(dueAt, now = Date.now()) {
+  const millisecondsRemaining =
+    new Date(dueAt).getTime() - new Date(now).getTime();
   const hoursRemaining = millisecondsRemaining / (1000 * 60 * 60);
 
   if (hoursRemaining <= 0) {
@@ -90,6 +67,16 @@ function getReminderType(dueAt) {
 }
 
 async function main() {
+  require("dotenv").config({ quiet: true });
+
+  const config = requireEnvironment([
+    "CANVAS_BASE_URL",
+    "CANVAS_ACCESS_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_ALLOWED_CHAT_ID",
+  ]);
+  const telegram = createTelegramClient(config.TELEGRAM_BOT_TOKEN);
+  const db = createDatabase();
   const monitoringState = getMonitoringState(db);
 
   if (monitoringState !== "running") {
@@ -136,7 +123,8 @@ async function main() {
       continue;
     }
 
-    await sendTelegramMessage(
+    await telegram.sendMessage(
+      config.TELEGRAM_ALLOWED_CHAT_ID,
       [
         `⏰ Canvas deadline — due ${reminder.label}`,
         activity.course,
@@ -165,7 +153,11 @@ async function main() {
   console.log(`Deadline reminders sent: ${remindersSent}`);
 }
 
-main().catch((error) => {
-  console.error("Deadline monitor failed:", error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error("Deadline monitor failed:", error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { getReminderType };
