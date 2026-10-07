@@ -134,6 +134,8 @@ test/
   attendance-files.test.js
   academic-report.test.js
   activity-logic.test.js
+  announcement-monitor.test.js
+  calendar-sync.test.js
   deadline-monitor.test.js
   runtime-config.test.js
   runtime-import-safety.test.js
@@ -143,6 +145,7 @@ docs/
   academic-pipeline.md
   releases/
     v0.3.0.md
+    v0.3.1.md
 
 CHANGELOG.md
 
@@ -281,14 +284,18 @@ includes:
 - authenticated Canvas requests and Canvas HTTP errors
 - pagination and same-origin pagination protection
 - assignment normalization and submitted/excused behavior
+- graded-but-missing Canvas submission semantics
 - Roll Call identification from external-tool metadata
 - academic Summary logic and assignment percentage calculation
 - Roll Call CSV parsing and current-user attendance filtering
+- sanitized malformed-attendance parser failures
 - class-date and attendance-status validation
 - multi-file attendance ingestion and attendance deduplication
 - generated workbook schema
 - Guardian pending/excused semantics and Manila date selection
 - deterministic deadline reminder thresholds
+- Google Calendar reconciliation/recovery and 404/410 handling
+- zero-active-course announcement handling
 - runtime configuration validation
 - Telegram request construction and error handling
 - runtime import safety without production secrets, service startup, external
@@ -320,12 +327,12 @@ The GitHub Actions workflow runs `npm ci` followed by `npm test` on pushes to
 
 ## Project Status
 
-The source version is `0.3.0`, representing the current `v0.3.0` release
+The source version is `0.3.1`, representing the current `v0.3.1` release
 line. Git tags and GitHub Releases are publication artifacts managed separately
 from the source version.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the release history and
-[`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md) for the v0.3.0 release
+[`docs/releases/v0.3.1.md`](docs/releases/v0.3.1.md) for the v0.3.1 release
 details.
 
 The older `v0.2.0-calendar-stable` name remains a documented historical

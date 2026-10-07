@@ -26,12 +26,7 @@ const tokenPath = path.join(
   "google-oauth-token.json"
 );
 
-function createDatabase() {
-  const db = new Database(path.join(projectRoot, "data", "horus.db"));
-
-  db.pragma("journal_mode = WAL");
-  db.pragma("busy_timeout = 5000");
-
+function ensureCalendarTable(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS google_calendar_events (
       assignment_key TEXT PRIMARY KEY,
@@ -41,6 +36,14 @@ function createDatabase() {
       synced_at TEXT NOT NULL
     );
   `);
+}
+
+function createDatabase() {
+  const db = new Database(path.join(projectRoot, "data", "horus.db"));
+
+  db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
+  ensureCalendarTable(db);
 
   return db;
 }
@@ -68,22 +71,6 @@ function createGoogleCalendarClient() {
     version: "v3",
     auth,
   });
-}
-
-async function getDatedAssignments() {
-  const assignments = await getAllActiveCourseAssignments();
-  const activities = assignments
-    .filter((assignment) => assignment.published && assignment.dueAt)
-    .map((assignment) => ({
-      ...assignment,
-      excused: assignment.excused === true,
-    }));
-
-  return activities.sort(
-    (a, b) =>
-      new Date(a.dueAt).getTime() -
-      new Date(b.dueAt).getTime()
-  );
 }
 
 function formatDate(dateString) {
@@ -150,38 +137,186 @@ function createContentHash(event) {
     .digest("hex");
 }
 
-async function main() {
-  require("dotenv").config({ quiet: true });
-
-  const config = requireEnvironment([
-    "CANVAS_BASE_URL",
-    "CANVAS_ACCESS_TOKEN",
-    "GOOGLE_CALENDAR_ID",
-  ]);
-  const db = createDatabase();
-  const monitoringState = getMonitoringState(db);
-
-  if (monitoringState !== "running") {
-    console.log(
-      `Horus is ${monitoringState}. Calendar sync skipped.`
-    );
-
-    return;
-  }
-
-  const calendarSyncEnabled = getCalendarSyncEnabled(db);
-
-  if (!calendarSyncEnabled) {
-    console.log(
-      "Google Calendar synchronization is disabled. Sync skipped."
+function getGoogleStatus(error) {
+  return Number(
+    error.response?.status ||
+    error.response?.statusCode ||
+    error.code
   );
-
-  return;
 }
 
-  const calendar = createGoogleCalendarClient();
-  const activities = await getDatedAssignments();
-  const now = Date.now();
+function isGoneGoogleStatus(error) {
+  return [404, 410].includes(getGoogleStatus(error));
+}
+
+async function deleteManagedGoogleEvent(calendar, calendarId, eventId) {
+  try {
+    await calendar.events.delete({
+      calendarId,
+      eventId,
+    });
+  } catch (error) {
+    if (!isGoneGoogleStatus(error)) {
+      throw error;
+    }
+  }
+}
+
+async function findManagedGoogleEvent(
+  calendar,
+  calendarId,
+  assignmentKey
+) {
+  const matches = [];
+  let pageToken;
+
+  do {
+    const response = await calendar.events.list({
+      calendarId,
+      privateExtendedProperty: [
+        "managedBy=horus",
+        `canvasAssignmentKey=${assignmentKey}`,
+      ],
+      showDeleted: false,
+      maxResults: 2,
+      ...(pageToken ? { pageToken } : {}),
+    });
+
+    for (const event of response.data?.items ?? []) {
+      const properties = event.extendedProperties?.private;
+
+      if (
+        properties?.managedBy === "horus" &&
+        properties?.canvasAssignmentKey === assignmentKey
+      ) {
+        matches.push(event);
+      }
+    }
+
+    if (matches.length > 1) {
+      break;
+    }
+
+    pageToken = response.data?.nextPageToken;
+  } while (pageToken);
+
+  if (matches.length > 1) {
+    throw new Error(
+      `Multiple managed Google Calendar events found for assignment ${assignmentKey}`
+    );
+  }
+
+  if (matches.length === 1 && !matches[0].id) {
+    throw new Error(
+      `Managed Google Calendar event for assignment ${assignmentKey} did not include an event ID`
+    );
+  }
+
+  return matches[0] ?? null;
+}
+
+async function insertGoogleEvent(
+  calendar,
+  calendarId,
+  activity,
+  event
+) {
+  const result = await calendar.events.insert({
+    calendarId,
+    requestBody: event,
+  });
+
+  if (!result.data?.id) {
+    throw new Error(
+      `Google did not return an event ID for ${activity.name}`
+    );
+  }
+
+  return result.data.id;
+}
+
+async function recoverOrCreateGoogleEvent({
+  calendar,
+  calendarId,
+  activity,
+  event,
+  now,
+  skipNewPastDue,
+}) {
+  const recovered = await findManagedGoogleEvent(
+    calendar,
+    calendarId,
+    activity.key
+  );
+
+  if (recovered) {
+    try {
+      await calendar.events.update({
+        calendarId,
+        eventId: recovered.id,
+        requestBody: event,
+      });
+
+      return {
+        eventId: recovered.id,
+        recovered: true,
+        created: false,
+        skipped: false,
+      };
+    } catch (error) {
+      if (!isGoneGoogleStatus(error)) {
+        throw error;
+      }
+    }
+  }
+
+  if (
+    skipNewPastDue &&
+    new Date(activity.dueAt).getTime() < now
+  ) {
+    return {
+      eventId: null,
+      recovered: false,
+      created: false,
+      skipped: true,
+    };
+  }
+
+  const eventId = await insertGoogleEvent(
+    calendar,
+    calendarId,
+    activity,
+    event
+  );
+
+  return {
+    eventId,
+    recovered: false,
+    created: true,
+    skipped: false,
+  };
+}
+
+async function syncCalendarAssignments({
+  assignments,
+  calendar,
+  calendarId,
+  db,
+  now = Date.now(),
+  log = console.log,
+}) {
+  const snapshot = assignments.map((assignment) => ({
+    ...assignment,
+    excused: assignment.excused === true,
+  }));
+  const assignmentsByKey = new Map(
+    snapshot.map((assignment) => [assignment.key, assignment])
+  );
+
+  const listMappings = db.prepare(`
+    SELECT assignment_key, google_event_id, due_at, content_hash
+    FROM google_calendar_events
+  `);
 
   const findMapping = db.prepare(`
     SELECT google_event_id, due_at, content_hash
@@ -211,71 +346,91 @@ async function main() {
   `);
 
   let created = 0;
+  let recovered = 0;
   let updated = 0;
   let removed = 0;
   let unchanged = 0;
   let pastSkipped = 0;
 
-  for (const activity of activities) {
+  for (const mapping of listMappings.all()) {
+    const assignment = assignmentsByKey.get(mapping.assignment_key);
+    const ineligible =
+      !assignment ||
+      !assignment.published ||
+      !assignment.dueAt ||
+      assignment.submitted;
+
+    if (!ineligible) {
+      continue;
+    }
+
+    await deleteManagedGoogleEvent(
+      calendar,
+      calendarId,
+      mapping.google_event_id
+    );
+
+    deleteMapping.run(mapping.assignment_key);
+    removed += 1;
+
+    if (assignment?.submitted) {
+      log(`Removed submitted activity: ${assignment.name}`);
+    } else if (assignment) {
+      log(`Removed ineligible activity: ${assignment.name}`);
+    } else {
+      log(`Removed disappeared assignment mapping: ${mapping.assignment_key}`);
+    }
+  }
+
+  const eligibleActivities = snapshot
+    .filter(
+      (assignment) =>
+        assignment.published &&
+        assignment.dueAt &&
+        !assignment.submitted
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.dueAt).getTime() -
+        new Date(b.dueAt).getTime()
+    );
+
+  for (const activity of eligibleActivities) {
     const existing = findMapping.get(activity.key);
-
-    if (activity.submitted) {
-      if (existing) {
-        try {
-          await calendar.events.delete({
-            calendarId: config.GOOGLE_CALENDAR_ID,
-            eventId: existing.google_event_id,
-          });
-        } catch (error) {
-          const status =
-            error.response?.status ||
-            error.response?.statusCode ||
-            error.code;
-
-          if (![404, 410].includes(Number(status))) {
-            throw error;
-          }
-        }
-
-        deleteMapping.run(activity.key);
-        removed += 1;
-
-        console.log(`Removed submitted activity: ${activity.name}`);
-      }
-
-      continue;
-    }
-
-    if (!existing && new Date(activity.dueAt).getTime() < now) {
-      pastSkipped += 1;
-      continue;
-    }
-
     const event = buildGoogleEvent(activity);
     const contentHash = createContentHash(event);
 
     if (!existing) {
-      const result = await calendar.events.insert({
-        calendarId: config.GOOGLE_CALENDAR_ID,
-        requestBody: event,
+      const result = await recoverOrCreateGoogleEvent({
+        calendar,
+        calendarId,
+        activity,
+        event,
+        now,
+        skipNewPastDue: true,
       });
 
-      if (!result.data.id) {
-        throw new Error(
-          `Google did not return an event ID for ${activity.name}`
-        );
+      if (result.skipped) {
+        pastSkipped += 1;
+        continue;
       }
 
       saveMapping.run(
         activity.key,
-        result.data.id,
+        result.eventId,
         activity.dueAt,
         contentHash,
-        new Date().toISOString()
+        new Date(now).toISOString()
       );
 
-      created += 1;
-      console.log(`Created: ${activity.name}`);
+      if (result.recovered) {
+        recovered += 1;
+        log(`Recovered: ${activity.name}`);
+      } else {
+        created += 1;
+        log(`Created: ${activity.name}`);
+      }
+
       continue;
     }
 
@@ -289,7 +444,7 @@ async function main() {
 
     try {
       await calendar.events.update({
-        calendarId: config.GOOGLE_CALENDAR_ID,
+        calendarId,
         eventId: existing.google_event_id,
         requestBody: event,
       });
@@ -299,46 +454,105 @@ async function main() {
         existing.google_event_id,
         activity.dueAt,
         contentHash,
-        new Date().toISOString()
+        new Date(now).toISOString()
       );
 
       updated += 1;
-      console.log(`Updated: ${activity.name}`);
+      log(`Updated: ${activity.name}`);
     } catch (error) {
-      const status =
-        error.response?.status ||
-        error.response?.statusCode ||
-        error.code;
-
-      if (Number(status) !== 404) {
+      if (!isGoneGoogleStatus(error)) {
         throw error;
       }
 
-      const result = await calendar.events.insert({
-        calendarId: config.GOOGLE_CALENDAR_ID,
-        requestBody: event,
+      const result = await recoverOrCreateGoogleEvent({
+        calendar,
+        calendarId,
+        activity,
+        event,
+        now,
+        skipNewPastDue: false,
       });
 
       saveMapping.run(
         activity.key,
-        result.data.id,
+        result.eventId,
         activity.dueAt,
         contentHash,
-        new Date().toISOString()
+        new Date(now).toISOString()
       );
 
-      created += 1;
-      console.log(`Recreated: ${activity.name}`);
+      if (result.recovered) {
+        recovered += 1;
+        log(`Recovered: ${activity.name}`);
+      } else {
+        created += 1;
+        log(`Recreated: ${activity.name}`);
+      }
     }
   }
 
+  return {
+    assignmentsChecked: snapshot.length,
+    eligibleChecked: eligibleActivities.length,
+    created,
+    recovered,
+    updated,
+    removed,
+    unchanged,
+    pastSkipped,
+  };
+}
+
+async function main() {
+  require("dotenv").config({ quiet: true });
+
+  const config = requireEnvironment([
+    "CANVAS_BASE_URL",
+    "CANVAS_ACCESS_TOKEN",
+    "GOOGLE_CALENDAR_ID",
+  ]);
+  const db = createDatabase();
+  const monitoringState = getMonitoringState(db);
+
+  if (monitoringState !== "running") {
+    console.log(
+      `Horus is ${monitoringState}. Calendar sync skipped.`
+    );
+
+    return;
+  }
+
+  const calendarSyncEnabled = getCalendarSyncEnabled(db);
+
+  if (!calendarSyncEnabled) {
+    console.log(
+      "Google Calendar synchronization is disabled. Sync skipped."
+    );
+
+    return;
+  }
+
+  const calendar = createGoogleCalendarClient();
+
+  // Reconciliation only happens after this complete paginated Canvas fetch
+  // succeeds. A failed fetch never becomes an empty assignment snapshot.
+  const assignments = await getAllActiveCourseAssignments();
+  const stats = await syncCalendarAssignments({
+    assignments,
+    calendar,
+    calendarId: config.GOOGLE_CALENDAR_ID,
+    db,
+  });
+
   console.log("");
-  console.log(`Canvas dated assignments checked: ${activities.length}`);
-  console.log(`Calendar events created: ${created}`);
-  console.log(`Calendar events updated: ${updated}`);
-  console.log(`Submitted events removed: ${removed}`);
-  console.log(`Calendar events unchanged: ${unchanged}`);
-  console.log(`Old unsynced assignments skipped: ${pastSkipped}`);
+  console.log(`Canvas assignments checked: ${stats.assignmentsChecked}`);
+  console.log(`Calendar-eligible assignments checked: ${stats.eligibleChecked}`);
+  console.log(`Calendar events created: ${stats.created}`);
+  console.log(`Calendar mappings recovered: ${stats.recovered}`);
+  console.log(`Calendar events updated: ${stats.updated}`);
+  console.log(`Ineligible/submitted events removed: ${stats.removed}`);
+  console.log(`Calendar events unchanged: ${stats.unchanged}`);
+  console.log(`Old unsynced assignments skipped: ${stats.pastSkipped}`);
 }
 
 if (require.main === module) {
@@ -351,3 +565,11 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
+module.exports = {
+  buildGoogleEvent,
+  createContentHash,
+  ensureCalendarTable,
+  findManagedGoogleEvent,
+  syncCalendarAssignments,
+};

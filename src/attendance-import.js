@@ -42,6 +42,29 @@ function isValidClassDate(value) {
   return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1];
 }
 
+function getSafeCsvParseError(error) {
+  const details = [];
+
+  if (
+    typeof error?.code === "string" &&
+    /^[A-Z0-9_]+$/.test(error.code)
+  ) {
+    details.push(`code ${error.code}`);
+  }
+
+  if (Number.isInteger(error?.lines) && error.lines > 0) {
+    details.push(`line ${error.lines}`);
+  }
+
+  if (Number.isInteger(error?.records) && error.records >= 0) {
+    details.push(`record ${error.records}`);
+  }
+
+  return details.length > 0
+    ? `Invalid attendance CSV (${details.join(", ")})`
+    : "Invalid attendance CSV";
+}
+
 function importAttendance(csvText, canvasUserId) {
   let rows;
 
@@ -52,7 +75,7 @@ function importAttendance(csvText, canvasUserId) {
       relax_column_count: true,
     });
   } catch (error) {
-    throw new Error(`Invalid attendance CSV: ${error.message}`);
+    throw new Error(getSafeCsvParseError(error));
   }
 
   if (rows.length === 0) {
@@ -127,4 +150,9 @@ function importAttendance(csvText, canvasUserId) {
   return attendance;
 }
 
-module.exports = { importAttendance, isValidClassDate, requiredHeaders };
+module.exports = {
+  getSafeCsvParseError,
+  importAttendance,
+  isValidClassDate,
+  requiredHeaders,
+};

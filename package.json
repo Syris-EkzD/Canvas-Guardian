@@ -1,6 +1,6 @@
 {
   "name": "canvas-guardian",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Self-hosted Canvas LMS guardian with Telegram monitoring, Google Calendar sync, and an academic data pipeline.",
   "scripts": {

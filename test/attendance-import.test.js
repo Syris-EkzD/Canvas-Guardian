@@ -131,3 +131,28 @@ test("accepts valid YYYY-MM-DD class dates", () => {
     "2026-02-28"
   );
 });
+
+test("sanitizes parser errors before unmatched-student values can leak", () => {
+  const sentinel = "FAKE_UNMATCHED_VALUE_42";
+  const malformedOtherStudent = row({
+    studentId: "7999",
+    studentName: sentinel,
+  }).replace(`"${sentinel}"`, `"${sentinel}`);
+
+  const csv = [
+    header,
+    malformedOtherStudent,
+    row({ classDate: "2042-03-11" }),
+  ].join("\n");
+
+  assert.throws(
+    () => importAttendance(csv, "7001"),
+    (error) => {
+      assert.match(error.message, /^Invalid attendance CSV/);
+      assert.doesNotMatch(error.message, new RegExp(sentinel));
+      assert.doesNotMatch(error.message, /7999/);
+      assert.doesNotMatch(error.message, /Student Alpha/);
+      return true;
+    }
+  );
+});
