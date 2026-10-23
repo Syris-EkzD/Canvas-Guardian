@@ -55,16 +55,38 @@ test("generates and revises with only whitelisted context and bounded SDK option
   assert.equal(calls[0].model, "gemini-3.8-flash");
   assert.equal(calls[0].config.responseMimeType, "application/json");
   assert.equal(calls[0].config.maxOutputTokens, 4096);
+  assert.equal(calls[0].config.automaticContinuation, false);
+  assert.deepEqual(calls[0].config.thinkingConfig, { thinkingLevel: "LOW" });
+  assert.equal(calls[1].config.automaticContinuation, false);
   assert.match(calls[1].contents, /Old draft/);
   assert.match(calls[1].contents, /Improve thesis/);
   assert.doesNotMatch(JSON.stringify(calls), /secret-canvas-token|secret-rubric-token/);
 });
 
-test("rejects empty, malformed, and truncated Gemini output", async () => {
-  for (const response of [{ text: "" }, { text: "{}" }, { text: JSON.stringify(result), candidates: [{ finishReason: "MAX_TOKENS" }] }]) {
+test("rejects empty, malformed, and incomplete Gemini output", async () => {
+  for (const response of [
+    { text: "", candidates: [{ finishReason: "STOP" }] },
+    { text: "{}", candidates: [{ finishReason: "STOP" }] },
+    { text: JSON.stringify(result) },
+    ...["CONTINUATION", "MAX_TOKENS", "SAFETY", "OTHER"].map((finishReason) => ({
+      text: JSON.stringify(result), candidates: [{ finishReason }],
+    })),
+  ]) {
     await assert.rejects(generateAssignmentDraft(context, { client: { models: { generateContent: async () => response } } }),
       (error) => error.code === "invalid_response");
   }
+});
+
+test("a CONTINUATION response does not trigger another generation request", async () => {
+  let requests = 0;
+  await assert.rejects(generateAssignmentDraft(context, {
+    client: { models: { generateContent: async ({ config }) => {
+      requests += 1;
+      assert.equal(config.automaticContinuation, false);
+      return { text: JSON.stringify(result), candidates: [{ finishReason: "CONTINUATION" }] };
+    } } },
+  }), (error) => error.code === "invalid_response");
+  assert.equal(requests, 1);
 });
 
 test("classifies rate limits, unavailable models, and network errors without leaking provider details", async () => {
