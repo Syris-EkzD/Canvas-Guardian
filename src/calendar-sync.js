@@ -215,6 +215,36 @@ async function findManagedGoogleEvent(
   return matches[0] ?? null;
 }
 
+async function listManagedGoogleEvents(calendar, calendarId) {
+  const events = new Map();
+  let pageToken;
+
+  do {
+    const response = await calendar.events.list({
+      calendarId,
+      privateExtendedProperty: ["managedBy=horus"],
+      showDeleted: false,
+      maxResults: 2500,
+      fields: "nextPageToken,items(id,status,extendedProperties)",
+      ...(pageToken ? { pageToken } : {}),
+    });
+
+    for (const event of response.data?.items ?? []) {
+      if (
+        event.id &&
+        event.status !== "cancelled" &&
+        event.extendedProperties?.private?.managedBy === "horus"
+      ) {
+        events.set(event.id, event);
+      }
+    }
+
+    pageToken = response.data?.nextPageToken;
+  } while (pageToken);
+
+  return events;
+}
+
 async function insertGoogleEvent(
   calendar,
   calendarId,
@@ -351,6 +381,7 @@ async function syncCalendarAssignments({
   let removed = 0;
   let unchanged = 0;
   let pastSkipped = 0;
+  let managedEvents;
 
   for (const mapping of listMappings.all()) {
     const assignment = assignmentsByKey.get(mapping.assignment_key);
@@ -438,6 +469,70 @@ async function syncCalendarAssignments({
       existing.due_at === activity.dueAt &&
       existing.content_hash === contentHash
     ) {
+      managedEvents ??= await listManagedGoogleEvents(calendar, calendarId);
+      let remote = managedEvents.get(existing.google_event_id);
+      let missing = false;
+
+      if (!remote) {
+        try {
+          remote = (await calendar.events.get({
+            calendarId,
+            eventId: existing.google_event_id,
+            fields: "id,status,extendedProperties",
+          })).data;
+        } catch (error) {
+          if (!isGoneGoogleStatus(error)) {
+            throw error;
+          }
+
+          missing = true;
+        }
+      }
+
+      if (remote?.status === "cancelled") {
+        missing = true;
+      }
+
+      if (missing) {
+        const result = await recoverOrCreateGoogleEvent({
+          calendar,
+          calendarId,
+          activity,
+          event,
+          now,
+          skipNewPastDue: false,
+        });
+
+        saveMapping.run(
+          activity.key,
+          result.eventId,
+          activity.dueAt,
+          contentHash,
+          new Date(now).toISOString()
+        );
+
+        if (result.recovered) {
+          recovered += 1;
+          log(`Recovered: ${activity.name}`);
+        } else {
+          created += 1;
+          log(`Recreated: ${activity.name}`);
+        }
+
+        continue;
+      }
+
+      const properties = remote?.extendedProperties?.private;
+      if (
+        remote?.id !== existing.google_event_id ||
+        properties?.managedBy !== "horus" ||
+        properties?.canvasAssignmentKey !== activity.key
+      ) {
+        throw new Error(
+          `Mapped Google Calendar event has unexpected ownership for ${activity.key}`
+        );
+      }
+
       unchanged += 1;
       continue;
     }
