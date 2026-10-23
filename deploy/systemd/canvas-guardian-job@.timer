@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Canvas Guardian %i job every ten minutes
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+Unit=canvas-guardian-job@%i.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Canvas Guardian %i job
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=canvasguardian
+Group=canvasguardian
+WorkingDirectory=/opt/canvas-guardian
+EnvironmentFile=/etc/canvas-guardian/guardian.env
+ExecStart=/usr/bin/npm run guardian:%i
+UMask=0077
