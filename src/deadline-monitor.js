@@ -30,10 +30,14 @@ function formatDate(dateString) {
   });
 }
 
-async function getPendingActivities() {
+async function getPendingActivities(db) {
   const assignments = await getAllActiveCourseAssignments();
 
-  return filterPendingAssignments(assignments)
+  return selectReminderCandidates(assignments, db);
+}
+
+function selectReminderCandidates(assignments, db) {
+  return filterPendingAssignments(assignments, db)
     .filter((assignment) => assignment.dueAt)
     .sort(
       (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()
@@ -84,7 +88,7 @@ async function main() {
     return;
   }
 
-  const activities = await getPendingActivities();
+  const activities = await getPendingActivities(db);
 
   const wasSent = db.prepare(`
     SELECT 1
@@ -160,4 +164,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { getReminderType };
+module.exports = { getReminderType, selectReminderCandidates };

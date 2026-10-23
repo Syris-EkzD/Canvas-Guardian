@@ -1,13 +1,11 @@
-function isPendingAssignment(assignment) {
-  return (
-    assignment.published &&
-    !assignment.submitted &&
-    assignment.excused !== true
-  );
+const { getEffectiveActivityStatus } = require("./activity-status");
+
+function isPendingAssignment(assignment, db) {
+  return getEffectiveActivityStatus(db, assignment) === "pending";
 }
 
-function filterPendingAssignments(assignments) {
-  return assignments.filter(isPendingAssignment);
+function filterPendingAssignments(assignments, db) {
+  return assignments.filter((assignment) => isPendingAssignment(assignment, db));
 }
 
 function getManilaDateKey(date) {
