@@ -2,11 +2,17 @@ function createTelegramClient(botToken, fetchImpl = global.fetch) {
   const telegramUrl = `https://api.telegram.org/bot${botToken}`;
   const fileUrl = `https://api.telegram.org/file/bot${botToken}/`;
 
-  async function call(method, body) {
+  function requestSignal(signal, timeoutMs) {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    return signal ? AbortSignal.any([signal, timeout]) : timeout;
+  }
+
+  async function call(method, body, signal) {
     const response = await fetchImpl(`${telegramUrl}/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: requestSignal(signal, 45_000),
     });
 
     let result;
@@ -38,8 +44,8 @@ function createTelegramClient(botToken, fetchImpl = global.fetch) {
     });
   }
 
-  async function downloadFile(fileId, maxBytes) {
-    const file = await call("getFile", { file_id: fileId });
+  async function downloadFile(fileId, maxBytes, signal) {
+    const file = await call("getFile", { file_id: fileId }, signal);
     if (Number.isFinite(file.file_size) && file.file_size > maxBytes) {
       throw new Error("CSV exceeds the configured size limit");
     }
@@ -51,7 +57,7 @@ function createTelegramClient(botToken, fetchImpl = global.fetch) {
 
     const response = await fetchImpl(`${fileUrl}${file.file_path}`, {
       redirect: "error",
-      signal: AbortSignal.timeout(60000),
+      signal: requestSignal(signal, 60_000),
     });
     if (!response.ok || !response.body) {
       throw new Error("Telegram file download failed");
@@ -82,7 +88,7 @@ function createTelegramClient(botToken, fetchImpl = global.fetch) {
     return Buffer.concat(chunks, size);
   }
 
-  async function sendDocument(chatId, buffer, filename = "academic-report.xlsx") {
+  async function sendDocument(chatId, buffer, filename = "academic-report.xlsx", signal) {
     if (!Buffer.isBuffer(buffer) || buffer.length > 50 * 1000 * 1000) {
       throw new Error("Report exceeds the Telegram document size limit");
     }
@@ -94,7 +100,7 @@ function createTelegramClient(botToken, fetchImpl = global.fetch) {
     const response = await fetchImpl(`${telegramUrl}/sendDocument`, {
       method: "POST",
       body: form,
-      signal: AbortSignal.timeout(60000),
+      signal: requestSignal(signal, 60_000),
     });
     let result;
     try {

@@ -18,6 +18,7 @@ const { createTelegramClient } = require("./telegram-client");
 const { createReportFromCsv } = require("./academic-pipeline");
 
 const DEFAULT_CSV_LIMIT = 5 * 1024 * 1024;
+const REPORT_TIMEOUT_MS = 120_000;
 
 function parseCsvLimit(value) {
   if (value === undefined || value === "") return DEFAULT_CSV_LIMIT;
@@ -28,7 +29,7 @@ function parseCsvLimit(value) {
   return mib * 1024 * 1024;
 }
 
-function createReportHandler({ telegram, maxCsvBytes = DEFAULT_CSV_LIMIT, createReport = createReportFromCsv }) {
+function createReportHandler({ telegram, maxCsvBytes = DEFAULT_CSV_LIMIT, createReport = createReportFromCsv, reportTimeoutMs = REPORT_TIMEOUT_MS }) {
   let busy = false;
   return async function handleReportDocument(message) {
     const chatId = message.chat.id;
@@ -47,13 +48,14 @@ function createReportHandler({ telegram, maxCsvBytes = DEFAULT_CSV_LIMIT, create
     }
 
     busy = true;
+    const signal = AbortSignal.timeout(reportTimeoutMs);
     try {
       await telegram.sendMessage(chatId, "Generating your academic report…");
-      const csv = await telegram.downloadFile(document.file_id, maxCsvBytes);
+      const csv = await telegram.downloadFile(document.file_id, maxCsvBytes, signal);
       const text = new TextDecoder("utf-8", { fatal: true }).decode(csv);
-      const { workbook } = await createReport(text);
+      const { workbook } = await createReport(text, undefined, { signal });
       const output = Buffer.from(await workbook.xlsx.writeBuffer());
-      await telegram.sendDocument(chatId, output);
+      await telegram.sendDocument(chatId, output, "academic-report.xlsx", signal);
       await telegram.sendMessage(chatId, "Academic report ready.").catch(() => {});
     } catch (error) {
       const safe = /^(Attendance CSV|Invalid attendance CSV|No attendance records|CSV exceeds|Telegram file download failed|Telegram returned an invalid file path|Report exceeds)/.test(error.message);
@@ -61,6 +63,26 @@ function createReportHandler({ telegram, maxCsvBytes = DEFAULT_CSV_LIMIT, create
     } finally {
       busy = false;
     }
+  };
+}
+
+function createUpdateProcessor(initialOffset, handle, persist, isReport, onBackgroundError) {
+  let offset = initialOffset;
+
+  return {
+    getOffset: () => offset,
+    async process(update) {
+      if (update.update_id < offset) return;
+
+      if (isReport(update.message)) {
+        void handle(update.message).catch(onBackgroundError);
+      } else {
+        await handle(update.message);
+      }
+
+      offset = update.update_id + 1;
+      persist(offset);
+    },
   };
 }
 
@@ -590,7 +612,31 @@ async function main() {
   const telegram = createTelegramClient(config.TELEGRAM_BOT_TOKEN);
   const send = telegram.sendMessage;
   const reportDocument = createReportHandler({ telegram, maxCsvBytes: parseCsvLimit(process.env.TELEGRAM_REPORT_MAX_CSV_MIB) });
-  let offset = await initializeOffset(db, telegram.call);
+  const initialOffset = await initializeOffset(db, telegram.call);
+  const runtime = {
+    db,
+    allowedChatId: config.TELEGRAM_ALLOWED_CHAT_ID,
+    send,
+    reportDocument,
+  };
+  const processMessage = async (message) => {
+    try {
+      await handleMessage(message, runtime);
+    } catch (error) {
+      console.error("Command failed:", error.message);
+      if (String(message?.chat?.id) === String(config.TELEGRAM_ALLOWED_CHAT_ID)) {
+        await send(message.chat.id, "Horus could not complete that command. Please try again.").catch(() => {});
+      }
+    }
+  };
+  const processor = createUpdateProcessor(
+    initialOffset,
+    processMessage,
+    (offset) => setSetting(db, "telegram_update_offset", String(offset)),
+    (message) => Boolean(message?.document && message.chat?.type === "private" &&
+      String(message.chat.id) === String(config.TELEGRAM_ALLOWED_CHAT_ID)),
+    (error) => console.error("Background report failed:", error.message)
+  );
 
   console.log("Horus Telegram command bot is listening.");
   console.log("Send /pending, /today, or /week in Telegram.");
@@ -598,35 +644,13 @@ async function main() {
   while (true) {
     try {
       const updates = await telegram.call("getUpdates", {
-        offset,
+        offset: processor.getOffset(),
         timeout: 30,
         allowed_updates: ["message"],
       });
 
       for (const update of updates) {
-        try {
-          await handleMessage(update.message, {
-            db,
-            allowedChatId: config.TELEGRAM_ALLOWED_CHAT_ID,
-            send,
-            reportDocument,
-          });
-        } catch (error) {
-          console.error("Command failed:", error.message);
-
-          if (
-            String(update.message?.chat?.id) ===
-            String(config.TELEGRAM_ALLOWED_CHAT_ID)
-          ) {
-            await send(
-              update.message.chat.id,
-              "Horus could not complete that command. Please try again."
-            ).catch(() => {});
-          }
-        }
-
-        offset = update.update_id + 1;
-        setSetting(db, "telegram_update_offset", String(offset));
+        await processor.process(update);
       }
     } catch (error) {
       console.error("Telegram polling failed:", error.message);
@@ -635,7 +659,7 @@ async function main() {
   }
 }
 
-module.exports = { createReportHandler, handleMessage, parseCsvLimit };
+module.exports = { createReportHandler, createUpdateProcessor, handleMessage, parseCsvLimit };
 
 if (require.main === module) {
   main().catch((error) => {

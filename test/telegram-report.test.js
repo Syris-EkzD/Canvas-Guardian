@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const ExcelJS = require("exceljs");
 const { requiredHeaders } = require("../src/attendance-import");
 const { createReportFromCsv } = require("../src/academic-pipeline");
-const { createReportHandler, handleMessage, parseCsvLimit } = require("../src/telegram-bot");
+const { createReportHandler, createUpdateProcessor, handleMessage, parseCsvLimit } = require("../src/telegram-bot");
 
 const row = ["9001", "SIS-1", "ART 123-X", "Art", "A", "9101", "SIS-A", "8001", "Teacher", "7001", "Student", "2042-03-04", "present", "2042-03-04T01:00:00Z"];
 const csv = `${requiredHeaders.join(",")}\n${row.join(",")}\n`;
@@ -91,6 +91,16 @@ test("CSV limit is configurable within Telegram download limit", () => {
   assert.throws(() => parseCsvLimit("21"), /integer from 1 to 20/);
 });
 
+test("report deadline reaches both Canvas profile and assignment requests", async () => {
+  const controller = new AbortController();
+  const signals = [];
+  await createReportFromCsv(csv, {
+    getProfile: async ({ signal }) => { signals.push(signal); return { id: 7001 }; },
+    getAssignments: async ({ signal }) => { signals.push(signal); return []; },
+  }, { signal: controller.signal });
+  assert.deepEqual(signals, [controller.signal, controller.signal]);
+});
+
 test("Canvas failures do not end report handling or expose API details", async () => {
   let available = false;
   const f = fixture();
@@ -107,6 +117,56 @@ test("Canvas failures do not end report handling or expose API details", async (
   await reportDocument(message);
   assert.equal(f.sent.at(-1), "Could not generate or deliver the report. Please try again.");
   available = true;
+  await reportDocument(message);
+  assert.equal(f.sent.at(-1), "Academic report ready.");
+});
+
+test("polling handles later commands while a report runs and advances offsets in order", async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const handled = [];
+  const checkpoints = [];
+  const processor = createUpdateProcessor(
+    10,
+    async (message) => {
+      handled.push(message.kind);
+      if (message.kind === "report") await pending;
+    },
+    (offset) => checkpoints.push(offset),
+    (message) => message.kind === "report",
+    (error) => { throw error; }
+  );
+
+  await processor.process({ update_id: 10, message: { kind: "report" } });
+  await processor.process({ update_id: 11, message: { kind: "status" } });
+  assert.deepEqual(handled, ["report", "status"]);
+  assert.equal(processor.getOffset(), 12);
+  assert.deepEqual(checkpoints, [11, 12]);
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(checkpoints, [11, 12]);
+  await processor.process({ update_id: 11, message: { kind: "stale" } });
+  assert.deepEqual(handled, ["report", "status"]);
+});
+
+test("a timed-out Canvas report frees the report slot", async () => {
+  const f = fixture();
+  let attempts = 0;
+  const reportDocument = createReportHandler({
+    telegram: f.telegram,
+    reportTimeoutMs: 10,
+    createReport: async (text, unused, { signal }) => {
+      attempts += 1;
+      if (attempts === 1) {
+        await new Promise((resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }
+      return createReportFromCsv(text, dependencies);
+    },
+  });
+  await reportDocument(message);
+  assert.equal(f.sent.at(-1), "Could not generate or deliver the report. Please try again.");
   await reportDocument(message);
   assert.equal(f.sent.at(-1), "Academic report ready.");
 });

@@ -64,6 +64,21 @@ test("canvasGet preserves the Canvas HTTP error", async () => {
   );
 });
 
+test("Canvas requests use bounded signals and honor a report cancellation", async () => {
+  const controller = new AbortController();
+  let seenSignal;
+  global.fetch = async (url, options) => {
+    seenSignal = options.signal;
+    return new Promise((resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    });
+  };
+  const request = canvasGet("/api/v1/example", { signal: controller.signal });
+  controller.abort(new Error("report deadline"));
+  await assert.rejects(request, /report deadline/);
+  assert.equal(seenSignal.aborted, true);
+});
+
 test("canvasGetAll follows only rel=next and preserves page order", async () => {
   const requests = [];
   const secondPageUrl = `${baseUrl}/api/v1/example?page=2`;
@@ -151,4 +166,24 @@ test("canvasGetAll preserves the Canvas HTTP error", async () => {
     canvasGetAll("/api/v1/example"),
     new Error("Canvas returned HTTP 503")
   );
+});
+
+test("paginated Canvas requests honor cancellation on a later page", async () => {
+  const controller = new AbortController();
+  let requests = 0;
+  global.fetch = async (url, options) => {
+    requests += 1;
+    if (requests === 1) {
+      return {
+        ok: true,
+        json: async () => [{ id: 1 }],
+        headers: { get: () => `<${baseUrl}/api/v1/example?page=2>; rel="next"` },
+      };
+    }
+    assert.ok(options.signal instanceof AbortSignal);
+    controller.abort(new Error("report deadline"));
+    throw options.signal.reason;
+  };
+  await assert.rejects(canvasGetAll("/api/v1/example", { signal: controller.signal }), /report deadline/);
+  assert.equal(requests, 2);
 });

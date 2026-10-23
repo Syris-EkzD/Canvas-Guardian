@@ -27,6 +27,7 @@ test("sendMessage posts the expected Telegram request", async () => {
     "https://api.telegram.org/botfake-telegram-token/sendMessage"
   );
   assert.equal(request.options.method, "POST");
+  assert.ok(request.options.signal instanceof AbortSignal);
   assert.deepEqual(JSON.parse(request.options.body), {
     chat_id: "fake-chat-id",
     text: "hello",
@@ -98,6 +99,7 @@ test("sendDocument uploads workbook bytes as multipart and reports delivery erro
   assert.equal(request.options.body.get("chat_id"), "42");
   assert.equal(await request.options.body.get("document").text(), "xlsx");
   assert.equal(request.options.body.get("document").name, "academic-report.xlsx");
+  assert.ok(request.options.signal instanceof AbortSignal);
   const failing = createTelegramClient("fake-token", async () => ({ ok: false, json: async () => ({ ok: false }) }));
   await assert.rejects(failing.sendDocument(42, Buffer.from("xlsx")), /delivery failed/);
 });

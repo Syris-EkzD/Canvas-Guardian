@@ -1,8 +1,16 @@
-async function canvasGet(pathname) {
+const CANVAS_REQUEST_TIMEOUT_MS = 30_000;
+
+function requestSignal(signal) {
+  const timeout = AbortSignal.timeout(CANVAS_REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+async function canvasGet(pathname, { signal } = {}) {
   const response = await fetch(`${process.env.CANVAS_BASE_URL}${pathname}`, {
     headers: {
       Authorization: `Bearer ${process.env.CANVAS_ACCESS_TOKEN}`,
     },
+    signal: requestSignal(signal),
   });
 
   if (!response.ok) {
@@ -34,7 +42,7 @@ function getCanvasPaginationUrl(nextLink, canvasBaseUrl) {
   return nextUrl.href;
 }
 
-async function canvasGetAll(pathname) {
+async function canvasGetAll(pathname, { signal } = {}) {
   const canvasBaseUrl = new URL(process.env.CANVAS_BASE_URL);
   let url = `${process.env.CANVAS_BASE_URL}${pathname}`;
   const results = [];
@@ -44,6 +52,7 @@ async function canvasGetAll(pathname) {
       headers: {
         Authorization: `Bearer ${process.env.CANVAS_ACCESS_TOKEN}`,
       },
+      signal: requestSignal(signal),
     });
 
     if (!response.ok) {
