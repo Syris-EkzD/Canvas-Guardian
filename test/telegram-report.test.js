@@ -40,6 +40,14 @@ test("authorized upload sends a valid workbook from only its CSV", async () => {
   assert.equal(f.sent.at(-1), "Academic report ready.");
 });
 
+test("conflicting attendance in one upload returns a safe error", async () => {
+  const conflictCsv = `${csv}${row.map((value, index) => index === 12 ? "absent" : value).join(",")}\n`;
+  const f = fixture({ downloadFile: async () => Buffer.from(conflictCsv) });
+  await f.reportDocument(message);
+  assert.equal(f.sent.at(-1), "Attendance CSV has conflicting statuses for the same course, section, and class date");
+  assert.equal(f.sent.some(Buffer.isBuffer), false);
+});
+
 test("unauthorized and nonprivate uploads never download", async () => {
   const f = fixture();
   await handleMessage(message, { allowedChatId: 99, reportDocument: f.reportDocument });
