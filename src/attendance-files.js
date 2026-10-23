@@ -13,7 +13,15 @@ function deduplicateAttendance(records) {
   for (const record of records) {
     const key = getAttendanceEventKey(record);
 
-    if (!uniqueRecords.has(key)) {
+    const previous = uniqueRecords.get(key);
+
+    if (previous && previous.status !== record.status) {
+      throw new Error(
+        "Attendance CSV has conflicting statuses for the same course, section, and class date"
+      );
+    }
+
+    if (!previous) {
       uniqueRecords.set(key, record);
     }
   }
