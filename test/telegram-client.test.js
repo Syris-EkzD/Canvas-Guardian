@@ -103,3 +103,21 @@ test("sendDocument uploads workbook bytes as multipart and reports delivery erro
   const failing = createTelegramClient("fake-token", async () => ({ ok: false, json: async () => ({ ok: false }) }));
   await assert.rejects(failing.sendDocument(42, Buffer.from("xlsx")), /delivery failed/);
 });
+
+test("inline keyboard editing and callback acknowledgment use Telegram methods", async () => {
+  const requests = [];
+  const client = createTelegramClient("fake-token", async (url, options) => {
+    requests.push({ method: url.split("/").at(-1), body: JSON.parse(options.body) });
+    return { ok: true, json: async () => ({ ok: true, result: true }) };
+  });
+  const keyboard = { inline_keyboard: [[{ text: "Select", callback_data: "a1:s:12:1" }]] };
+  await client.sendMessage(42, "Choose", keyboard);
+  await client.editMessageText(42, 7, "Detail", keyboard);
+  await client.answerCallbackQuery("query-1", "Done");
+  assert.deepEqual(requests.map(request => request.method), ["sendMessage", "editMessageText", "answerCallbackQuery"]);
+  assert.deepEqual(requests[0].body.reply_markup, keyboard);
+  assert.deepEqual(requests[1].body, {
+    chat_id: 42, message_id: 7, text: "Detail", disable_web_page_preview: true, reply_markup: keyboard,
+  });
+  assert.deepEqual(requests[2].body, { callback_query_id: "query-1", text: "Done" });
+});
