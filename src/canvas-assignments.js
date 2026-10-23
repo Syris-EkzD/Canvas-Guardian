@@ -30,13 +30,14 @@ function normalizeAssignment(course, assignment) {
   };
 }
 
-async function getActiveCourseAssignmentsWith(canvasRequest) {
-  const courses = await canvasRequest(activeCoursesPath);
+async function getActiveCourseAssignmentsWith(canvasRequest, options) {
+  const courses = await canvasRequest(activeCoursesPath, options);
   const normalizedAssignments = [];
 
   for (const course of courses) {
     const assignments = await canvasRequest(
-      `/api/v1/courses/${course.id}/assignments?include[]=submission&order_by=due_at&per_page=100`
+      `/api/v1/courses/${course.id}/assignments?include[]=submission&order_by=due_at&per_page=100`,
+      options
     );
 
     for (const assignment of assignments) {
@@ -47,12 +48,12 @@ async function getActiveCourseAssignmentsWith(canvasRequest) {
   return normalizedAssignments;
 }
 
-function getActiveCourseAssignments() {
-  return getActiveCourseAssignmentsWith(canvasGet);
+function getActiveCourseAssignments(options) {
+  return getActiveCourseAssignmentsWith(canvasGet, options);
 }
 
-function getAllActiveCourseAssignments() {
-  return getActiveCourseAssignmentsWith(canvasGetAll);
+function getAllActiveCourseAssignments(options) {
+  return getActiveCourseAssignmentsWith(canvasGetAll, options);
 }
 
 module.exports = {

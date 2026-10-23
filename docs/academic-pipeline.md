@@ -1,6 +1,6 @@
 # Academic pipeline MVP
 
-The academic pipeline writes one local Excel workbook from live Canvas assignments and detailed attendance sessions in official Roll Call exports.
+The academic pipeline writes an Excel workbook from live Canvas assignments and detailed attendance sessions in official Roll Call exports. The CLI reads local files; the Telegram bot accepts one uploaded CSV per report.
 
 ```mermaid
 flowchart LR
@@ -30,6 +30,8 @@ Normal academic activities and attendance remain separate because they represent
 The Assignments sheet displays Score, Points Possible, and Percentage, where Percentage is calculated as Score divided by Points Possible. Detailed Present, Absent, and Late records come only from offline Roll Call CSV exports. Courses without detailed offline attendance remain in Summary with blank attendance cells, even when Canvas provides an aggregate Roll Call grade.
 
 Place one or more official CSV exports directly in `data/input/attendance/`. Exports may cover different courses and date ranges, and filenames do not determine course identity or priority. Overlapping events are deduplicated by Course ID, Section ID, and Class Date; the first record from deterministic filename order is retained. Missing rows are never interpreted as presence or absence.
+
+For Telegram, send one official Roll Call CSV as a document to the authorized private chat. The bot processes that upload alone in memory, applies the same current-user filtering and deduplication, and sends an `.xlsx` report. Use `/report` for instructions. The default 5 MiB CSV limit can be changed with `TELEGRAM_REPORT_MAX_CSV_MIB` (1–20 MiB). Telegram file download and document upload are subject to the hosted Bot API's [20 MB download and 50 MB upload limits](https://core.telegram.org/bots/api). The uploaded filename is ignored.
 
 Summary includes courses discovered through returned Canvas assignments. Courses with no returned assignments are not added solely for completeness in this MVP.
 

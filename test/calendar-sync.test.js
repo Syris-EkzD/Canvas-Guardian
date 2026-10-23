@@ -90,6 +90,9 @@ function managedRemoteEvent(activity, id) {
 function createFakeCalendar({
   remoteEvents = [],
   deleteStatuses = {},
+  getStatuses = {},
+  listStatus = null,
+  pageSize = null,
   updateStatuses = {},
   insertIds = [],
 } = {}) {
@@ -102,6 +105,7 @@ function createFakeCalendar({
   const queuedInsertIds = [...insertIds];
   const calls = {
     list: [],
+    get: [],
     delete: [],
     update: [],
     insert: [],
@@ -109,8 +113,19 @@ function createFakeCalendar({
 
   const calendar = {
     events: {
+      async get(parameters) {
+        calls.get.push(parameters);
+        if (getStatuses[parameters.eventId]) {
+          throw googleError(getStatuses[parameters.eventId]);
+        }
+        const event = remote.find((item) => item.id === parameters.eventId);
+        if (!event) throw googleError(404);
+        return { data: event };
+      },
+
       async list(parameters) {
         calls.list.push(parameters);
+        if (listStatus) throw googleError(listStatus);
 
         const keyFilter = parameters.privateExtendedProperty?.find(
           (value) => value.startsWith("canvasAssignmentKey=")
@@ -121,12 +136,21 @@ function createFakeCalendar({
           const properties = event.extendedProperties?.private;
 
           return (
+            event.status !== "cancelled" &&
             properties?.managedBy === "horus" &&
-            properties?.canvasAssignmentKey === key
+            (!key || properties?.canvasAssignmentKey === key)
           );
         });
 
-        return { data: { items } };
+        const start = Number(parameters.pageToken || 0);
+        const size = pageSize ?? items.length;
+        const next = start + size;
+        return {
+          data: {
+            items: items.slice(start, next),
+            ...(next < items.length ? { nextPageToken: String(next) } : {}),
+          },
+        };
       },
 
       async delete(parameters) {
@@ -260,6 +284,27 @@ for (const status of [404, 410]) {
   });
 }
 
+test("recreates an unchanged mapped event returned as cancelled", async () => {
+  const db = createDb();
+  const current = assignment();
+  saveMapping(db, {
+    dueAt: current.dueAt,
+    contentHash: createContentHash(buildGoogleEvent(current)),
+  });
+  const fake = createFakeCalendar({
+    remoteEvents: [{ ...managedRemoteEvent(current, "mapped-event"), status: "cancelled" }],
+    insertIds: ["replacement-event"],
+  });
+
+  const result = await sync({ db, assignments: [current], fake });
+
+  assert.equal(fake.calls.get.length, 1);
+  assert.equal(fake.calls.insert.length, 1);
+  assert.equal(getMapping(db).google_event_id, "replacement-event");
+  assert.equal(result.created, 1);
+  db.close();
+});
+
 test("retains the mapping and propagates unexpected remote deletion failures", async () => {
   const db = createDb();
   saveMapping(db);
@@ -378,7 +423,9 @@ test("does not update or insert an unchanged mapped event", async () => {
     contentHash: createContentHash(event),
   });
 
-  const fake = createFakeCalendar();
+  const fake = createFakeCalendar({
+    remoteEvents: [managedRemoteEvent(current, "mapped-event")],
+  });
   const result = await sync({
     db,
     assignments: [current],
@@ -387,8 +434,150 @@ test("does not update or insert an unchanged mapped event", async () => {
 
   assert.equal(fake.calls.update.length, 0);
   assert.equal(fake.calls.insert.length, 0);
-  assert.equal(fake.calls.list.length, 0);
+  assert.equal(fake.calls.list.length, 1);
+  assert.equal(fake.calls.get.length, 0);
   assert.equal(result.unchanged, 1);
+  assert.equal(getMapping(db).google_event_id, "mapped-event");
+  db.close();
+});
+
+test("checks unchanged mapped events with one paginated managed-event listing", async () => {
+  const db = createDb();
+  const first = assignment();
+  const second = assignment({ id: "102", key: "10:102" });
+  saveMapping(db, {
+    key: first.key,
+    eventId: "mapped-first",
+    dueAt: first.dueAt,
+    contentHash: createContentHash(buildGoogleEvent(first)),
+  });
+  saveMapping(db, {
+    key: second.key,
+    eventId: "mapped-second",
+    dueAt: second.dueAt,
+    contentHash: createContentHash(buildGoogleEvent(second)),
+  });
+  const fake = createFakeCalendar({
+    remoteEvents: [
+      managedRemoteEvent(first, "mapped-first"),
+      managedRemoteEvent(second, "mapped-second"),
+    ],
+    pageSize: 1,
+  });
+
+  const result = await sync({ db, assignments: [first, second], fake });
+
+  assert.equal(fake.calls.list.length, 2);
+  assert.equal(fake.calls.get.length, 0);
+  assert.equal(fake.calls.insert.length, 0);
+  assert.equal(result.unchanged, 2);
+  assert.equal(getMapping(db, first.key).google_event_id, "mapped-first");
+  assert.equal(getMapping(db, second.key).google_event_id, "mapped-second");
+  db.close();
+});
+
+for (const status of [404, 410]) {
+  test(`recreates a missing unchanged mapped event after ${status}`, async () => {
+    const db = createDb();
+    const current = assignment();
+    saveMapping(db, {
+      dueAt: current.dueAt,
+      contentHash: createContentHash(buildGoogleEvent(current)),
+    });
+    const fake = createFakeCalendar({
+      getStatuses: { "mapped-event": status },
+      insertIds: ["replacement-event"],
+    });
+
+    const result = await sync({ db, assignments: [current], fake });
+
+    assert.equal(fake.calls.get.length, 1);
+    assert.equal(fake.calls.list.length, 2);
+    assert.equal(fake.calls.insert.length, 1);
+    assert.equal(getMapping(db).google_event_id, "replacement-event");
+    assert.equal(result.created, 1);
+    assert.equal(result.unchanged, 0);
+    db.close();
+  });
+}
+
+test("recovers an existing managed replacement without inserting a duplicate", async () => {
+  const db = createDb();
+  const current = assignment();
+  saveMapping(db, {
+    dueAt: current.dueAt,
+    contentHash: createContentHash(buildGoogleEvent(current)),
+  });
+  const fake = createFakeCalendar({
+    remoteEvents: [managedRemoteEvent(current, "replacement-event")],
+  });
+
+  const result = await sync({ db, assignments: [current], fake });
+
+  assert.equal(fake.calls.insert.length, 0);
+  assert.equal(getMapping(db).google_event_id, "replacement-event");
+  assert.equal(result.recovered, 1);
+  db.close();
+});
+
+test("does not create an event when recovery finds duplicate managed candidates", async () => {
+  const db = createDb();
+  const current = assignment();
+  saveMapping(db, {
+    dueAt: current.dueAt,
+    contentHash: createContentHash(buildGoogleEvent(current)),
+  });
+  const fake = createFakeCalendar({
+    remoteEvents: [
+      managedRemoteEvent(current, "replacement-one"),
+      managedRemoteEvent(current, "replacement-two"),
+    ],
+  });
+
+  await assert.rejects(sync({ db, assignments: [current], fake }), /Multiple managed/);
+  assert.equal(fake.calls.insert.length, 0);
+  assert.equal(getMapping(db).google_event_id, "mapped-event");
+  db.close();
+});
+
+for (const failure of ["list", "get"]) {
+  test(`propagates unexpected ${failure} errors without changing a mapping`, async () => {
+    const db = createDb();
+    const current = assignment();
+    saveMapping(db, {
+      dueAt: current.dueAt,
+      contentHash: createContentHash(buildGoogleEvent(current)),
+    });
+    const fake = createFakeCalendar(failure === "list"
+      ? { listStatus: 500 }
+      : { getStatuses: { "mapped-event": 500 } });
+
+    await assert.rejects(sync({ db, assignments: [current], fake }), /Google error 500/);
+    assert.equal(fake.calls.insert.length, 0);
+    assert.equal(getMapping(db).google_event_id, "mapped-event");
+    db.close();
+  });
+}
+
+test("does not change a mapped event with unexpected ownership", async () => {
+  const db = createDb();
+  const current = assignment();
+  saveMapping(db, {
+    dueAt: current.dueAt,
+    contentHash: createContentHash(buildGoogleEvent(current)),
+  });
+  const fake = createFakeCalendar({
+    remoteEvents: [managedRemoteEvent({ key: "another-assignment" }, "mapped-event")],
+  });
+
+  await assert.rejects(
+    sync({ db, assignments: [current], fake }),
+    /unexpected ownership/
+  );
+
+  assert.equal(fake.calls.update.length, 0);
+  assert.equal(fake.calls.insert.length, 0);
+  assert.equal(getMapping(db).google_event_id, "mapped-event");
   db.close();
 });
 

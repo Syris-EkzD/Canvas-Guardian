@@ -15,6 +15,76 @@ const {
 } = require("./monitoring-state");
 const { requireEnvironment } = require("./runtime-config");
 const { createTelegramClient } = require("./telegram-client");
+const { createReportFromCsv } = require("./academic-pipeline");
+
+const DEFAULT_CSV_LIMIT = 5 * 1024 * 1024;
+const REPORT_TIMEOUT_MS = 120_000;
+
+function parseCsvLimit(value) {
+  if (value === undefined || value === "") return DEFAULT_CSV_LIMIT;
+  const mib = Number(value);
+  if (!Number.isInteger(mib) || mib < 1 || mib > 20) {
+    throw new Error("TELEGRAM_REPORT_MAX_CSV_MIB must be an integer from 1 to 20");
+  }
+  return mib * 1024 * 1024;
+}
+
+function createReportHandler({ telegram, maxCsvBytes = DEFAULT_CSV_LIMIT, createReport = createReportFromCsv, reportTimeoutMs = REPORT_TIMEOUT_MS }) {
+  let busy = false;
+  return async function handleReportDocument(message) {
+    const chatId = message.chat.id;
+    const document = message.document;
+    if (busy) {
+      await telegram.sendMessage(chatId, "A report is already being generated. Please try again shortly.");
+      return;
+    }
+    if (!document?.file_id || (document.file_size !== undefined && (!Number.isSafeInteger(document.file_size) || document.file_size < 1))) {
+      await telegram.sendMessage(chatId, "Please upload one valid Roll Call CSV document.");
+      return;
+    }
+    if (document.file_size > maxCsvBytes) {
+      await telegram.sendMessage(chatId, "CSV exceeds the configured size limit.");
+      return;
+    }
+
+    busy = true;
+    const signal = AbortSignal.timeout(reportTimeoutMs);
+    try {
+      await telegram.sendMessage(chatId, "Generating your academic report…");
+      const csv = await telegram.downloadFile(document.file_id, maxCsvBytes, signal);
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(csv);
+      const { workbook } = await createReport(text, undefined, { signal });
+      const output = Buffer.from(await workbook.xlsx.writeBuffer());
+      await telegram.sendDocument(chatId, output, "academic-report.xlsx", signal);
+      await telegram.sendMessage(chatId, "Academic report ready.").catch(() => {});
+    } catch (error) {
+      const safe = /^(Attendance CSV|Invalid attendance CSV|No attendance records|CSV exceeds|Telegram file download failed|Telegram returned an invalid file path|Report exceeds)/.test(error.message);
+      await telegram.sendMessage(chatId, safe ? error.message : "Could not generate or deliver the report. Please try again.");
+    } finally {
+      busy = false;
+    }
+  };
+}
+
+function createUpdateProcessor(initialOffset, handle, persist, isReport, onBackgroundError) {
+  let offset = initialOffset;
+
+  return {
+    getOffset: () => offset,
+    async process(update) {
+      if (update.update_id < offset) return;
+
+      if (isReport(update.message)) {
+        void handle(update.message).catch(onBackgroundError);
+      } else {
+        await handle(update.message);
+      }
+
+      offset = update.update_id + 1;
+      persist(offset);
+    },
+  };
+}
 
 function createDatabase() {
   const db = new Database(path.join(__dirname, "..", "data", "horus.db"));
@@ -190,16 +260,24 @@ async function sendAnnouncementList(send, chatId, announcements) {
 }
 
 async function handleMessage(message, runtime) {
-  const { db, allowedChatId, send } = runtime;
+  const { db, allowedChatId, send, reportDocument } = runtime;
 
-  if (!message?.text) {
+  if (!message?.chat) {
     return;
   }
 
   if (String(message.chat.id) !== String(allowedChatId)) {
-    console.log(`Ignored unauthorized chat: ${message.chat.id}`);
     return;
   }
+
+  if (message.document) {
+    if (message.chat.type === "private") {
+      await reportDocument(message);
+    }
+    return;
+  }
+
+  if (!message.text) return;
 
   const messageParts = message.text.trim().split(/\s+/);
 
@@ -355,9 +433,15 @@ async function handleMessage(message, runtime) {
         "/week — show activities due within 7 days",
         "/help — show this command list",
         "/calendar on|off|status — control calendar synchronization",
+        "/report — how to generate an Excel academic report",
       ].join("\n")
     );
 
+    return;
+  }
+
+  if (command === "/report") {
+    await send(message.chat.id, "Upload one official Roll Call CSV document in this private chat. I’ll return an Excel report with Summary, Assignments, and Attendance sheets. The default CSV limit is 5 MiB (configurable by the operator).");
     return;
   }
 
@@ -527,7 +611,32 @@ async function main() {
   const db = createDatabase();
   const telegram = createTelegramClient(config.TELEGRAM_BOT_TOKEN);
   const send = telegram.sendMessage;
-  let offset = await initializeOffset(db, telegram.call);
+  const reportDocument = createReportHandler({ telegram, maxCsvBytes: parseCsvLimit(process.env.TELEGRAM_REPORT_MAX_CSV_MIB) });
+  const initialOffset = await initializeOffset(db, telegram.call);
+  const runtime = {
+    db,
+    allowedChatId: config.TELEGRAM_ALLOWED_CHAT_ID,
+    send,
+    reportDocument,
+  };
+  const processMessage = async (message) => {
+    try {
+      await handleMessage(message, runtime);
+    } catch (error) {
+      console.error("Command failed:", error.message);
+      if (String(message?.chat?.id) === String(config.TELEGRAM_ALLOWED_CHAT_ID)) {
+        await send(message.chat.id, "Horus could not complete that command. Please try again.").catch(() => {});
+      }
+    }
+  };
+  const processor = createUpdateProcessor(
+    initialOffset,
+    processMessage,
+    (offset) => setSetting(db, "telegram_update_offset", String(offset)),
+    (message) => Boolean(message?.document && message.chat?.type === "private" &&
+      String(message.chat.id) === String(config.TELEGRAM_ALLOWED_CHAT_ID)),
+    (error) => console.error("Background report failed:", error.message)
+  );
 
   console.log("Horus Telegram command bot is listening.");
   console.log("Send /pending, /today, or /week in Telegram.");
@@ -535,34 +644,13 @@ async function main() {
   while (true) {
     try {
       const updates = await telegram.call("getUpdates", {
-        offset,
+        offset: processor.getOffset(),
         timeout: 30,
         allowed_updates: ["message"],
       });
 
       for (const update of updates) {
-        try {
-          await handleMessage(update.message, {
-            db,
-            allowedChatId: config.TELEGRAM_ALLOWED_CHAT_ID,
-            send,
-          });
-        } catch (error) {
-          console.error("Command failed:", error.message);
-
-          if (
-            String(update.message?.chat?.id) ===
-            String(config.TELEGRAM_ALLOWED_CHAT_ID)
-          ) {
-            await send(
-              update.message.chat.id,
-              "Horus could not complete that command. Please try again."
-            );
-          }
-        }
-
-        offset = update.update_id + 1;
-        setSetting(db, "telegram_update_offset", String(offset));
+        await processor.process(update);
       }
     } catch (error) {
       console.error("Telegram polling failed:", error.message);
@@ -570,6 +658,8 @@ async function main() {
     }
   }
 }
+
+module.exports = { createReportHandler, createUpdateProcessor, handleMessage, parseCsvLimit };
 
 if (require.main === module) {
   main().catch((error) => {

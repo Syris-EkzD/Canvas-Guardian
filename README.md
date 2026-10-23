@@ -8,8 +8,8 @@ normalization layer:
   and commands, synchronizes assignment deadlines with Google Calendar, and
   keeps monitoring state in SQLite for a systemd-based self-hosted deployment.
 - **Academic Data Pipeline** — combines live Canvas assignment data with
-  official offline Roll Call CSV exports and generates a local Excel academic
-  report.
+  official Roll Call CSV exports and generates an Excel report locally or through
+  the authorized private Telegram chat.
 
 ## Guardian Runtime
 
@@ -61,7 +61,17 @@ detailed academic pipeline flow is documented in
 | `/calendar on` | Enable calendar synchronization |
 | `/calendar off` | Disable calendar synchronization |
 | `/calendar status` | Show calendar synchronization status |
+| `/report` | Explain how to upload one Roll Call CSV for an Excel report |
 | `/help` | Show all available commands |
+
+Send one official Roll Call CSV as a Telegram **document** in the authorized
+private chat. The bot fetches current Canvas assignments, filters attendance to
+the Canvas profile user, and returns an `.xlsx` file containing `Summary`,
+`Assignments`, and `Attendance`. No command is needed before uploading. The CSV
+size limit defaults to 5 MiB and can be set with
+`TELEGRAM_REPORT_MAX_CSV_MIB` (1–20 MiB). Each upload creates an independent
+report; local CSV files are never included. The bot keeps upload and report
+bytes in memory only until delivery completes.
 
 ## How It Works
 
@@ -185,6 +195,9 @@ secrets/
 - GitHub Actions
 - systemd / Ubuntu Server
 
+The [Ubuntu deployment guide](docs/ubuntu-deployment.md) provides bot and job
+unit templates, permissions, startup checks, logs, and upgrade/rollback steps.
+
 ## Local Setup
 
 1. Clone the repository and enter it:
@@ -212,7 +225,7 @@ secrets/
      required by Canvas-backed Guardian services and the Academic Data Pipeline.
    - **Telegram runtime:** `TELEGRAM_BOT_TOKEN` and
      `TELEGRAM_ALLOWED_CHAT_ID` are required by the Guardian notification
-     monitors and Telegram command bot.
+     monitors and Telegram command bot. `TELEGRAM_REPORT_MAX_CSV_MIB` is optional.
    - **Google Calendar:** `GOOGLE_CALENDAR_ID` is required only for Calendar
      synchronization.
 
@@ -298,6 +311,8 @@ includes:
 - zero-active-course announcement handling
 - runtime configuration validation
 - Telegram request construction and error handling
+- Telegram CSV upload authorization, bounded downloads, report delivery, and
+  failure recovery
 - runtime import safety without production secrets, service startup, external
   requests, or SQLite initialization
 

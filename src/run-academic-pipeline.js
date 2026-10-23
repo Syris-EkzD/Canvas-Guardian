@@ -3,10 +3,8 @@ require("dotenv").config({ quiet: true });
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
-const { createAcademicWorkbook } = require("./academic-report");
+const { getAcademicData } = require("./academic-pipeline");
 const { loadAttendanceFromDirectory } = require("./attendance-files");
-const { getAllActiveCourseAssignments } = require("./canvas-assignments");
-const { canvasGet } = require("./canvas-client");
 
 const attendanceDirectory = path.resolve("data/input/attendance");
 const outputPath = path.resolve("data/output/academic-report.xlsx");
@@ -42,19 +40,13 @@ async function writeOutput(workbook) {
 async function run() {
   validateConfiguration();
 
-  const profile = await canvasGet("/api/v1/users/self/profile");
-
-  if (profile.id === null || profile.id === undefined) {
-    throw new Error("Canvas profile response did not include a user ID");
-  }
-
-  const assignments = await getAllActiveCourseAssignments();
   const {
+    assignments,
     attendance,
     filesProcessed,
     duplicateRecordsRemoved,
-  } = await loadAttendanceFromDirectory(attendanceDirectory, profile.id);
-  const workbook = createAcademicWorkbook(assignments, attendance);
+    workbook,
+  } = await getAcademicData((userId) => loadAttendanceFromDirectory(attendanceDirectory, userId));
 
   await writeOutput(workbook);
 
