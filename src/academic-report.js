@@ -1,21 +1,21 @@
 const ExcelJS = require("exceljs");
 
-const dueDateFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: "Asia/Manila",
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  hour12: true,
-});
+const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-const attendanceDateFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: "Asia/Manila",
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
+function safeSpreadsheetText(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value);
+  return /^[\s\u0000-\u001f]*[=+\-@]/.test(text) ? `'${text}` : text;
+}
+
+function toManilaExcelDate(value) {
+  return value ? new Date(new Date(value).getTime() + MANILA_OFFSET_MS) : null;
+}
+
+function toExcelClassDate(value) {
+  return new Date(`${value}T00:00:00.000Z`);
+}
 
 const sheetDefinitions = {
   Summary: [
@@ -23,6 +23,8 @@ const sheetDefinitions = {
     { header: "Total Activities", key: "totalActivities", width: 18 },
     { header: "Submitted", key: "submitted", width: 12 },
     { header: "Pending", key: "pending", width: 12 },
+    { header: "Upcoming 7 Days", key: "upcoming", width: 18 },
+    { header: "Overdue Pending", key: "overdue", width: 19 },
     { header: "Excused", key: "excused", width: 12 },
     { header: "Graded", key: "graded", width: 12 },
     {
@@ -34,6 +36,7 @@ const sheetDefinitions = {
     { header: "Present", key: "present", width: 11 },
     { header: "Absent", key: "absent", width: 11 },
     { header: "Late", key: "late", width: 11 },
+    { header: "Attended %", key: "attendedPercentage", width: 16 },
     { header: "Attendance From", key: "attendanceFrom", width: 18 },
     { header: "Attendance Through", key: "attendanceThrough", width: 20 },
   ],
@@ -42,9 +45,11 @@ const sheetDefinitions = {
     { header: "Assignment", key: "assignment", width: 42 },
     { header: "Due Date", key: "dueDate", width: 25 },
     { header: "Status", key: "status", width: 19 },
+    { header: "Canvas Grade", key: "grade", width: 18 },
     { header: "Score", key: "score", width: 12 },
     { header: "Points Possible", key: "pointsPossible", width: 17 },
     { header: "Percentage", key: "percentage", width: 14 },
+    { header: "Canvas Link", key: "canvasLink", width: 19 },
   ],
   Attendance: [
     { header: "Course", key: "course", width: 22 },
@@ -66,7 +71,7 @@ function isRollCallAssignment(assignment) {
   }
 }
 
-function getAssignmentStatus(assignment) {
+function getAssignmentStatus(assignment, now = new Date()) {
   if (assignment.excused === true) {
     return "Excused";
   }
@@ -75,19 +80,9 @@ function getAssignmentStatus(assignment) {
     return "Submitted";
   }
 
-  return "Pending";
-}
-
-function formatDueDate(value) {
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  return dueDateFormatter.format(new Date(value));
-}
-
-function formatAttendanceDate(value) {
-  return attendanceDateFormatter.format(new Date(`${value}T00:00:00+08:00`));
+  return assignment.dueAt && new Date(assignment.dueAt) < now
+    ? "Overdue"
+    : "Pending";
 }
 
 function formatAttendanceStatus(status) {
@@ -108,20 +103,30 @@ function calculatePercentage(score, pointsPossible) {
   return score / pointsPossible;
 }
 
-function buildAssignmentRows(assignments) {
+function buildAssignmentRows(assignments, now = new Date()) {
   return assignments
     .filter((assignment) => !isRollCallAssignment(assignment))
+    .sort((left, right) =>
+      String(left.course).localeCompare(String(right.course)) ||
+      (left.dueAt === null || left.dueAt === undefined ? Infinity : Date.parse(left.dueAt)) -
+        (right.dueAt === null || right.dueAt === undefined ? Infinity : Date.parse(right.dueAt)) ||
+      String(left.name).localeCompare(String(right.name)) ||
+      String(left.id).localeCompare(String(right.id))
+    )
     .map((assignment) => ({
-      course: assignment.course,
-      assignment: assignment.name,
-      dueDate: formatDueDate(assignment.dueAt),
-      status: getAssignmentStatus(assignment),
+      course: safeSpreadsheetText(assignment.course),
+      assignment: safeSpreadsheetText(assignment.name),
+      dueDate: toManilaExcelDate(assignment.dueAt),
+      status: getAssignmentStatus(assignment, now),
+      grade: safeSpreadsheetText(assignment.grade),
       score: assignment.score ?? null,
       pointsPossible: assignment.pointsPossible ?? null,
-      percentage: calculatePercentage(
-        assignment.score,
-        assignment.pointsPossible
-      ),
+      percentage: assignment.grade === null || assignment.grade === undefined || assignment.grade === ""
+        ? null
+        : calculatePercentage(assignment.score, assignment.pointsPossible),
+      canvasLink: /^https?:\/\//i.test(assignment.htmlUrl ?? "")
+        ? { text: "Open in Canvas", hyperlink: assignment.htmlUrl }
+        : null,
     }));
 }
 
@@ -133,8 +138,8 @@ function buildAttendanceRows(attendance) {
         left.classDate.localeCompare(right.classDate)
     )
     .map((record) => ({
-      course: record.courseCode,
-      classDate: formatAttendanceDate(record.classDate),
+      course: safeSpreadsheetText(record.courseCode),
+      classDate: toExcelClassDate(record.classDate),
       status: formatAttendanceStatus(record.status),
     }));
 }
@@ -172,7 +177,7 @@ function aggregateAttendanceByCourse(attendance) {
   return summaries;
 }
 
-function buildSummaryRows(assignments, attendance) {
+function buildSummaryRows(assignments, attendance, now = new Date()) {
   const attendanceByCourse = aggregateAttendanceByCourse(attendance);
   const courseRows = new Map();
 
@@ -182,10 +187,12 @@ function buildSummaryRows(assignments, attendance) {
     if (!row) {
       const attendanceSummary = attendanceByCourse.get(assignment.courseId);
       row = {
-        course: assignment.course,
+        course: safeSpreadsheetText(assignment.course),
         totalActivities: 0,
         submitted: 0,
         pending: 0,
+        upcoming: 0,
+        overdue: 0,
         excused: 0,
         graded: 0,
         canvasAttendanceGrade: null,
@@ -193,18 +200,22 @@ function buildSummaryRows(assignments, attendance) {
         present: attendanceSummary?.present ?? null,
         absent: attendanceSummary?.absent ?? null,
         late: attendanceSummary?.late ?? null,
+        attendedPercentage: attendanceSummary
+          ? (attendanceSummary.present + attendanceSummary.late) /
+            attendanceSummary.attendanceRecords
+          : null,
         attendanceFrom: attendanceSummary
-          ? formatAttendanceDate(attendanceSummary.firstDate)
+          ? toExcelClassDate(attendanceSummary.firstDate)
           : null,
         attendanceThrough: attendanceSummary
-          ? formatAttendanceDate(attendanceSummary.lastDate)
+          ? toExcelClassDate(attendanceSummary.lastDate)
           : null,
       };
       courseRows.set(assignment.courseId, row);
     }
 
     if (isRollCallAssignment(assignment)) {
-      row.canvasAttendanceGrade = assignment.grade ?? null;
+      row.canvasAttendanceGrade = safeSpreadsheetText(assignment.grade);
       continue;
     }
 
@@ -216,6 +227,14 @@ function buildSummaryRows(assignments, attendance) {
       row.submitted += 1;
     } else {
       row.pending += 1;
+      if (assignment.dueAt) {
+        const dueTime = new Date(assignment.dueAt).getTime();
+        if (dueTime < now.getTime()) {
+          row.overdue += 1;
+        } else if (dueTime <= now.getTime() + WEEK_MS) {
+          row.upcoming += 1;
+        }
+      }
     }
 
     if (
@@ -227,7 +246,9 @@ function buildSummaryRows(assignments, attendance) {
     }
   }
 
-  return [...courseRows.values()];
+  return [...courseRows.values()].sort((left, right) =>
+    left.course.localeCompare(right.course)
+  );
 }
 
 function addReportSheet(workbook, name, rows) {
@@ -235,9 +256,18 @@ function addReportSheet(workbook, name, rows) {
     views: [{ state: "frozen", ySplit: 1, showGridLines: false }],
   });
   worksheet.columns = sheetDefinitions[name];
-    if (name === "Assignments") {
+  if (name === "Assignments") {
     worksheet.getColumn("percentage").numFmt = "0.##%";
-    }
+    worksheet.getColumn("dueDate").numFmt = "mmm d, yyyy h:mm AM/PM";
+  }
+  if (name === "Summary") {
+    worksheet.getColumn("attendedPercentage").numFmt = "0.0%";
+    worksheet.getColumn("attendanceFrom").numFmt = "mmm d, yyyy";
+    worksheet.getColumn("attendanceThrough").numFmt = "mmm d, yyyy";
+  }
+  if (name === "Attendance") {
+    worksheet.getColumn("classDate").numFmt = "mmm d, yyyy";
+  }
 
   worksheet.addRows(rows);
   worksheet.autoFilter = {
@@ -285,6 +315,10 @@ function addReportSheet(workbook, name, rows) {
           wrapText: true,
         };
         row.height = Math.min(54, estimatedLines * 18);
+        const linkCell = row.getCell("canvasLink");
+        if (linkCell.value) {
+          linkCell.font = { name: "Arial", size: 10, color: { argb: "FF0563C1" }, underline: true };
+        }
       } else {
         row.height = 18;
       }
@@ -294,7 +328,7 @@ function addReportSheet(workbook, name, rows) {
   return worksheet;
 }
 
-function createAcademicWorkbook(assignments, attendance) {
+function createAcademicWorkbook(assignments, attendance, now = new Date()) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Canvas Guardian";
   workbook.created = new Date();
@@ -303,9 +337,9 @@ function createAcademicWorkbook(assignments, attendance) {
   addReportSheet(
     workbook,
     "Summary",
-    buildSummaryRows(assignments, attendance)
+    buildSummaryRows(assignments, attendance, now)
   );
-  addReportSheet(workbook, "Assignments", buildAssignmentRows(assignments));
+  addReportSheet(workbook, "Assignments", buildAssignmentRows(assignments, now));
   addReportSheet(workbook, "Attendance", buildAttendanceRows(attendance));
 
   return workbook;

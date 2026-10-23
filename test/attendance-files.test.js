@@ -78,13 +78,17 @@ test("keeps attendance events from different courses and sections", () => {
   assert.equal(result.duplicateRecordsRemoved, 0);
 });
 
-test("uses course, section, and class date for duplicate identity", () => {
+test("rejects conflicting statuses for the same course, section, and class date", () => {
   const first = record({ status: "present" });
   const duplicateWithDifferentStatus = record({ status: "absent" });
-  const result = deduplicateAttendance([first, duplicateWithDifferentStatus]);
-
-  assert.deepEqual(result.attendance, [first]);
-  assert.equal(result.duplicateRecordsRemoved, 1);
+  assert.throws(
+    () => deduplicateAttendance([first, duplicateWithDifferentStatus]),
+    /Attendance CSV has conflicting statuses/
+  );
+  assert.throws(
+    () => deduplicateAttendance([duplicateWithDifferentStatus, first]),
+    /Attendance CSV has conflicting statuses/
+  );
 });
 
 test("combines multiple exports, skips unmatched files, and deduplicates overlaps", async () => {
@@ -98,7 +102,7 @@ test("combines multiple exports, skips unmatched files, and deduplicates overlap
         path.join(directory, "b-full.csv"),
         [
           header,
-          row({ attendance: "absent" }),
+          row({ attendance: "present" }),
           row({
             courseId: "9002",
             sectionId: "9201",
@@ -128,6 +132,20 @@ test("combines multiple exports, skips unmatched files, and deduplicates overlap
         status: "late",
       }),
     ]);
+  });
+});
+
+test("rejects conflicting statuses across overlapping files", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    await Promise.all([
+      fs.writeFile(path.join(directory, "a.csv"), `${header}\n${row({ attendance: "present" })}`),
+      fs.writeFile(path.join(directory, "b.csv"), `${header}\n${row({ attendance: "absent" })}`),
+    ]);
+
+    await assert.rejects(
+      loadAttendanceFromDirectory(directory, "7001"),
+      /Attendance CSV has conflicting statuses/
+    );
   });
 });
 
