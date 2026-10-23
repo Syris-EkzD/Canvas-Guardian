@@ -46,10 +46,10 @@ function formatDate(dateString) {
   });
 }
 
-async function getPendingActivities() {
+async function getPendingActivities(db) {
   const assignments = await getAllActiveCourseAssignments();
 
-  return filterPendingAssignments(assignments);
+  return filterPendingAssignments(assignments, db);
 }
 
 async function main() {
@@ -70,7 +70,7 @@ async function main() {
     return;
   }
 
-  const activities = await getPendingActivities();
+  const activities = await getPendingActivities(db);
   const firstRun = !getSetting(db, "activity_baseline_created");
 
   const saveActivity = db.prepare(`
