@@ -208,11 +208,7 @@ function activityDetail(db, assignment) {
 async function handleCallbackQuery(query, runtime) {
   const { db, allowedChatId, telegram, getAssignments = getAllActiveCourseAssignments } = runtime;
   if (!query?.id) return;
-  let acknowledged = false;
-  const answer = async (text) => {
-    await telegram.answerCallbackQuery(query.id, text);
-    acknowledged = true;
-  };
+  const answer = (text) => telegram.answerCallbackQuery(query.id, text);
   if (query.message?.chat?.type !== "private" ||
       String(query.message.chat.id) !== String(allowedChatId) ||
       String(query.from?.id) !== String(allowedChatId)) {
@@ -226,6 +222,19 @@ async function handleCallbackQuery(query, runtime) {
     await answer("This button is no longer valid. Use /pending or /activities.");
     return;
   }
+  await answer("Checking activity…");
+  const show = async (display) => {
+    if (query.message.text === display.text) return;
+    try {
+      await telegram.editMessageText(query.message.chat.id, query.message.message_id, display.text, display.markup);
+    } catch {
+      await telegram.sendMessage(query.message.chat.id, display.text, display.markup);
+    }
+  };
+  const navigation = { inline_keyboard: [[
+    { text: "📚 Pending", callback_data: "a1:l:p:0" },
+    { text: "🗂 Saved", callback_data: "a1:l:a:0" },
+  ]] };
   try {
     const assignments = await getAssignments();
     let display;
@@ -235,7 +244,7 @@ async function handleCallbackQuery(query, runtime) {
     } else {
       const assignment = assignments.find((entry) => entry.key === item[2]);
       if (!assignment) {
-        await answer("Activity no longer found. Open a fresh list.");
+        await show({ text: "Activity no longer found. Open a fresh list.", markup: navigation });
         return;
       }
       const current = getEffectiveActivityStatus(db, assignment);
@@ -257,17 +266,10 @@ async function handleCallbackQuery(query, runtime) {
       }
       display = activityDetail(db, assignment);
     }
-    await answer(notice);
-    if (query.message.text === display.text) return;
-    try {
-      await telegram.editMessageText(query.message.chat.id, query.message.message_id, display.text, display.markup);
-    } catch {
-      await telegram.sendMessage(query.message.chat.id, display.text, display.markup);
-    }
+    if (notice) display.text += `\n\n${notice}`;
+    await show(display);
   } catch {
-    if (!acknowledged) {
-      await answer("Could not load this activity. Please try again.").catch(() => {});
-    }
+    await show({ text: "Could not load activities. Please try again.", markup: navigation }).catch(() => {});
   }
 }
 

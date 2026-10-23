@@ -45,14 +45,14 @@ test("paged pending selection, offline completion, dismissal, and restoration", 
   assert.match(f.edits.at(-1)[2], /Guardian status: pending/);
   await handleCallbackQuery(f.query("a1:c:12:1"), f.runtime);
   assert.equal(getActivityStatusOverride(f.db, "12:1").status, "completed_offline");
-  assert.match(f.answers.at(-1)[1], /Canvas was not changed/);
+  assert.match(f.edits.at(-1)[2], /Canvas was not changed/);
   await handleCallbackQuery(f.query("a1:c:12:1"), f.runtime);
-  assert.equal(f.answers.at(-1)[1], "Already in that status.");
+  assert.match(f.edits.at(-1)[2], /Already in that status/);
   await handleCallbackQuery(f.query("a1:d:12:2"), f.runtime);
   assert.equal(getActivityStatusOverride(f.db, "12:2").status, "dismissed");
   await handleCallbackQuery(f.query("a1:c:12:2"), f.runtime);
   assert.equal(getActivityStatusOverride(f.db, "12:2").status, "dismissed");
-  assert.match(f.answers.at(-1)[1], /status changed/);
+  assert.match(f.edits.at(-1)[2], /status changed/);
   assert.deepEqual(filterPendingAssignments(f.assignments, f.db).map(a => a.key).slice(0, 2), ["12:3", "12:4"]);
   assert.equal(selectReminderCandidates(f.assignments, f.db).length, 8);
   await handleMessage({ chat: { id: 42, type: "private" }, from: { id: 42 }, text: "/activities" }, f.runtime);
@@ -70,10 +70,30 @@ test("callback authorization, malformed payloads, missing and submitted assignme
   }
   assert.equal(getActivityStatusOverride(f.db, "12:1"), null);
   assert.equal(f.answers.length, 4);
+  assert.match(f.edits.at(-1)[2], /Activity no longer found/);
   f.assignments[0].submitted = true;
   await handleCallbackQuery(f.query("a1:d:12:1"), f.runtime);
   assert.equal(getActivityStatusOverride(f.db, "12:1"), null);
-  assert.match(f.answers.at(-1)[1], /Canvas status changed/);
+  assert.match(f.edits.at(-1)[2], /Canvas status changed/);
+  f.db.close();
+});
+
+test("valid callbacks acknowledge before a delayed Canvas response and report failures safely", async () => {
+  const f = fixture();
+  let release;
+  f.runtime.getAssignments = () => new Promise(resolve => { release = resolve; });
+  const pending = handleCallbackQuery(f.query("a1:d:12:1"), f.runtime);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.answers, [["q0", "Checking activity…"]]);
+  assert.equal(getActivityStatusOverride(f.db, "12:1"), null);
+  release(f.assignments);
+  await pending;
+  assert.equal(getActivityStatusOverride(f.db, "12:1").status, "dismissed");
+  f.runtime.getAssignments = async () => { throw new Error("private Canvas details"); };
+  await handleCallbackQuery(f.query("a1:s:12:1"), f.runtime);
+  assert.equal(f.answers.length, 2);
+  assert.match(f.edits.at(-1)[2], /Could not load activities/);
+  assert.doesNotMatch(f.edits.at(-1)[2], /private Canvas/);
   f.db.close();
 });
 

@@ -1,6 +1,8 @@
 const MANUAL_STATUSES = new Set(["completed_offline", "dismissed"]);
+const initializedDatabases = new WeakSet();
 
 function ensureActivityStatusTable(db) {
+  if (initializedDatabases.has(db)) return;
   db.exec(`
     CREATE TABLE IF NOT EXISTS activity_status_overrides (
       assignment_key TEXT PRIMARY KEY,
@@ -8,6 +10,7 @@ function ensureActivityStatusTable(db) {
       updated_at TEXT NOT NULL
     );
   `);
+  initializedDatabases.add(db);
 }
 
 function getActivityStatusOverride(db, assignmentKey) {

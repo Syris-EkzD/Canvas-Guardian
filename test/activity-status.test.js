@@ -76,6 +76,14 @@ test("only manual statuses can be stored", () => {
   db.close();
 });
 
+test("status table is initialized once per database connection", () => {
+  let calls = 0;
+  const db = { exec() { calls += 1; } };
+  ensureActivityStatusTable(db);
+  ensureActivityStatusTable(db);
+  assert.equal(calls, 1);
+});
+
 test("Canvas submissions and excusals take precedence over manual status", () => {
   const db = new Database(":memory:");
   setActivityStatusOverride(db, "1:1", "dismissed");
