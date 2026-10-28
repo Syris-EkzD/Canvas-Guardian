@@ -1,0 +1,18 @@
+# v0.4.0 security and quality audit
+
+Audited from `efce817bd72aca88ed173193361f365c09b136c6` on Node.js 24. No production credentials or student records were used.
+
+| Priority | Evidence and impact | Correction and regression coverage |
+| --- | --- | --- |
+| Medium: Google OAuth callback could accept an unrelated authorization response | `src/authorize-google-calendar.js` opened a loopback callback and exchanged any supplied `code` without a `state` check. A local request could cause the operator to save credentials for the wrong Google account. | Generate a random state for each authorization attempt and verify it before exchanging a code. `test/google-oauth-state.test.js` covers valid, missing, and mismatched states. |
+| Medium: attendance CSV resource exhaustion and ambiguous headers | `src/attendance-import.js` parsed the entire upload synchronously, allowed arbitrarily many records and large fields, and selected the first occurrence of a required column. Telegram bounds download bytes, but 20 MiB of tiny records can expand sharply in memory. Offline imports had no byte limit. | Bound input to 20 MiB, records to 100,000, and individual record size to 64 KiB; reject duplicate header names. `test/attendance-import.test.js` covers each boundary and existing Roll Call formats. |
+| Medium: report uploads could be lost after a restart | `src/telegram-bot.js` persisted the Telegram update offset as soon as it started a background report. A process restart before report completion skipped that upload permanently. | Keep polling responsive, but persist only the contiguous completed update offsets. `test/telegram-report.test.js` covers a pending report followed by a command and failed report completion. An interrupted report may be replayed after restart. |
+| Low: direct CSV parser advisory remained in the lockfile | `csv-parse@6.2.1` was installed. The advisory requires `columns: true` with `group_columns_by_name: true`; the importer uses neither. | Upgraded to 7.0.3 after a clean install and full suite passed, removing the direct advisory without changing CSV import behavior. |
+
+## Assessed without code changes
+
+- `uuid@8.3.2` and its inherited `exceljs@4.4.0` audit alert remain. The advisory requires UUID v3, v5, or v6 with a caller supplied output buffer. The installed ExcelJS imports only v4 and calls `uuidv4()` without arguments. `npm audit` suggests ExcelJS 3.4.0, a major downgrade; its current `uuid: ^8.3.0` range cannot take the patched UUID 11.1.1. There is no demonstrated vulnerable call path in report generation. Reassess if ExcelJS adds affected UUID calls or updates its dependency.
+- Canvas pagination rejects foreign origins before forwarding the bearer token, and Canvas requests have a 30 second timeout. Telegram commands and callbacks are restricted to the configured private chat; file downloads have byte and time limits. The workbook writes untrusted Canvas and CSV strings as escaped text, rather than formulas. SQLite writes use parameterized statements. Calendar reconciliation waits for a complete Canvas fetch before changing managed events. These paths did not justify changes in this audit.
+- The loopback OAuth listener still requires an operator to complete Google's browser flow. The state check protects that specific flow; it does not replace host security or a live integration test.
+
+CI now fails on high or critical production dependency advisories. Moderate findings remain visible in the audit output and are reviewed individually here, avoiding a permanently failing gate for the inherited ExcelJS alert. Unit tests and a clean install do not constitute live Canvas, Telegram, or Google integration testing.
