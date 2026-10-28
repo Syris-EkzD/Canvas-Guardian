@@ -129,7 +129,7 @@ test("Canvas failures do not end report handling or expose API details", async (
   assert.equal(f.sent.at(-1), "Academic report ready.");
 });
 
-test("polling handles later commands while a report runs and advances offsets in order", async () => {
+test("polling handles later commands while a report runs but checkpoints only finished work", async () => {
   let release;
   const pending = new Promise((resolve) => { release = resolve; });
   const handled = [];
@@ -149,12 +149,29 @@ test("polling handles later commands while a report runs and advances offsets in
   await processor.process({ update_id: 11, message: { kind: "status" } });
   assert.deepEqual(handled, ["report", "status"]);
   assert.equal(processor.getOffset(), 12);
-  assert.deepEqual(checkpoints, [11, 12]);
+  assert.deepEqual(checkpoints, []);
   release();
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(checkpoints, [11, 12]);
   await processor.process({ update_id: 11, message: { kind: "stale" } });
   assert.deepEqual(handled, ["report", "status"]);
+});
+
+test("a failed background report also releases the durable checkpoint", async () => {
+  let rejectReport;
+  const failure = new Promise((resolve, reject) => { rejectReport = reject; });
+  const checkpoints = [];
+  const errors = [];
+  const processor = createUpdateProcessor(5, () => failure,
+    (offset) => checkpoints.push(offset), () => true,
+    (error) => errors.push(error.message));
+  await processor.process({ update_id: 5, message: { document: {} } });
+  assert.equal(processor.getOffset(), 6);
+  assert.deepEqual(checkpoints, []);
+  rejectReport(new Error("report failed"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(errors, ["report failed"]);
+  assert.deepEqual(checkpoints, [6]);
 });
 
 test("a timed-out Canvas report frees the report slot", async () => {

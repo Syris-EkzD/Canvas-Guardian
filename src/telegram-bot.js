@@ -102,22 +102,48 @@ function createReportHandler({ telegram, maxCsvBytes = DEFAULT_CSV_LIMIT, create
 
 function createUpdateProcessor(initialOffset, handle, persist, isReport, onBackgroundError, handleCallback = async () => {}) {
   let offset = initialOffset;
+  const checkpoints = [];
+
+  function commitCompleted() {
+    while (checkpoints[0]?.done) {
+      persist(checkpoints[0].offset);
+      checkpoints.shift();
+    }
+  }
 
   return {
     getOffset: () => offset,
     async process(update) {
       if (update.update_id < offset) return;
 
+      let backgroundReport = false;
       if (update.callback_query) {
         await handleCallback(update.callback_query);
       } else if (isReport(update.message)) {
-        void handle(update.message).catch(onBackgroundError);
+        backgroundReport = true;
+        const work = handle(update.message);
+        const checkpoint = { offset: update.update_id + 1, done: false };
+        checkpoints.push(checkpoint);
+        void Promise.resolve(work).then(
+          () => {
+            checkpoint.done = true;
+            commitCompleted();
+          },
+          (error) => {
+            onBackgroundError(error);
+            checkpoint.done = true;
+            commitCompleted();
+          }
+        ).catch(onBackgroundError);
       } else {
         await handle(update.message);
       }
 
       offset = update.update_id + 1;
-      persist(offset);
+      if (!backgroundReport) {
+        checkpoints.push({ offset, done: true });
+        commitCompleted();
+      }
     },
   };
 }
