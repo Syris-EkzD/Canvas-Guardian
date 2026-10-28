@@ -5,7 +5,7 @@ const { getActivityStatusOverride } = require("../src/activity-status");
 const { filterPendingAssignments } = require("../src/activity-logic");
 const { selectReminderCandidates } = require("../src/deadline-monitor");
 const {
-  COMMANDS, activityPage, createUpdateProcessor, handleCallbackQuery,
+  COMMANDS, activityPage, createAssignmentCache, createUpdateProcessor, handleCallbackQuery,
   handleMessage, initializeOffset, registerCommands,
 } = require("../src/telegram-bot");
 
@@ -36,8 +36,9 @@ test("paged pending selection, offline completion, dismissal, and restoration", 
   await handleMessage({ chat: { id: 42, type: "private" }, from: { id: 42 }, text: "/pending" }, f.runtime);
   assert.equal(f.sent.length, 1);
   assert.match(f.sent[0][1], /Pending activities: 10/);
-  assert.equal(f.sent[0][2].inline_keyboard.length, 9);
-  assert.equal(f.sent[0][2].inline_keyboard.at(-1)[0].callback_data, "a1:l:p:1");
+  assert.equal(f.sent[0][2].inline_keyboard.length, 7);
+  assert.equal(f.sent[0][2].inline_keyboard.at(-2)[0].callback_data, "a1:l:p:1");
+  assert.equal(f.sent[0][2].inline_keyboard.at(-1)[0].callback_data, "a1:f:p:0");
   await handleCallbackQuery(f.query("a1:l:p:1"), f.runtime);
   assert.match(f.edits.at(-1)[2], /Task 10/);
   await handleCallbackQuery(f.query("a1:s:12:1"), f.runtime);
@@ -176,5 +177,106 @@ test("calendar toggle, explicit options, status, and help registry", async () =>
   assert.match(f.sent.at(-1)[1], /DISABLED/);
   await handleMessage(message("/help"), f.runtime);
   for (const { command } of COMMANDS) assert.match(f.sent.at(-1)[1], new RegExp(`/${command} —`));
+  f.db.close();
+});
+
+test("five-item pages expose Refresh and details omit the redundant status button", async () => {
+  const f = fixture();
+  const first = activityPage(f.assignments, f.db, "p", 0);
+  assert.match(first.text, /Page 1\/2/);
+  assert.match(first.text, /Task 5/);
+  assert.doesNotMatch(first.text, /Task 6/);
+  assert.equal(first.markup.inline_keyboard.length, 7);
+  assert.deepEqual(first.markup.inline_keyboard.at(-1), [
+    { text: "🔄 Refresh from Canvas", callback_data: "a1:f:p:0" },
+  ]);
+  await handleCallbackQuery(f.query("a1:s:12:1"), f.runtime);
+  const detailButtons = f.edits.at(-1)[3].inline_keyboard.flat().map(button => button.text);
+  assert.equal(detailButtons.some(label => label.includes("View current status")), false);
+  assert.equal(detailButtons.some(label => label.includes("Completed Offline")), true);
+  assert.equal(detailButtons.some(label => label.includes("Dismiss")), true);
+  f.db.close();
+});
+
+test("assignment cache reuses the snapshot for 60 seconds, accepts updates, and refreshes on demand", async () => {
+  let now = 1000;
+  let requests = 0;
+  const cache = createAssignmentCache(
+    async () => [{ key: "12:1", name: `Load ${++requests}` }],
+    60_000, () => now
+  );
+  assert.equal((await cache.get())[0].name, "Load 1");
+  now += 59_999;
+  assert.equal((await cache.get())[0].name, "Load 1");
+  assert.equal(requests, 1);
+  cache.update({ key: "12:1", name: "Updated" });
+  assert.equal((await cache.get())[0].name, "Updated");
+  assert.equal((await cache.get({ force: true }))[0].name, "Load 2");
+  now += 60_000;
+  assert.equal((await cache.get())[0].name, "Load 3");
+  assert.equal(requests, 3);
+});
+
+test("assignment cache shares in-flight loads and retries after a transient failure", async () => {
+  let release;
+  let requests = 0;
+  const cache = createAssignmentCache(() => {
+    requests += 1;
+    if (requests === 1) return new Promise(resolve => { release = resolve; });
+    if (requests === 2) return Promise.reject(new Error("Canvas offline"));
+    return Promise.resolve([{ key: "12:1" }]);
+  });
+  const a = cache.get();
+  const b = cache.get();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests, 1);
+  release([{ key: "12:2" }]);
+  assert.deepEqual(await a, await b);
+  await assert.rejects(cache.get({ force: true }), /Canvas offline/);
+  assert.equal((await cache.get({ force: true }))[0].key, "12:1");
+  assert.equal(requests, 3);
+});
+
+test("cached activity buttons avoid full Canvas reloads; refresh fetches again", async () => {
+  const f = fixture();
+  let listFetches = 0;
+  f.runtime.assignmentCache = createAssignmentCache(async () => {
+    listFetches += 1;
+    return f.assignments.map(item => ({ ...item }));
+  });
+  const message = { chat: { id: 42, type: "private" }, from: { id: 42 }, text: "/pending" };
+  await handleMessage(message, f.runtime);
+  await handleCallbackQuery(f.query("a1:l:p:1"), f.runtime);
+  await handleCallbackQuery(f.query("a1:s:12:1"), f.runtime);
+  assert.equal(listFetches, 1);
+
+  let targetedChecks = 0;
+  f.runtime.getFreshAssignment = async assignment => {
+    targetedChecks += 1;
+    return { ...assignment, submitted: true };
+  };
+  await handleCallbackQuery(f.query("a1:d:12:1"), f.runtime);
+  assert.equal(targetedChecks, 1);
+  assert.equal(listFetches, 1);
+  assert.equal(getActivityStatusOverride(f.db, "12:1"), null);
+  assert.match(f.edits.at(-1)[2], /Canvas status changed/);
+
+  await handleCallbackQuery(f.query("a1:f:p:0"), f.runtime);
+  assert.equal(listFetches, 2);
+  f.runtime.getFreshAssignment = async assignment => ({ ...assignment, submitted: false });
+  await handleCallbackQuery(f.query("a1:c:12:1"), f.runtime);
+  assert.equal(getActivityStatusOverride(f.db, "12:1").status, "completed_offline");
+  assert.equal(listFetches, 2);
+  f.db.close();
+});
+
+test("failed fresh Canvas verification never changes a Guardian status", async () => {
+  const f = fixture();
+  f.runtime.assignmentCache = createAssignmentCache(f.runtime.getAssignments);
+  f.runtime.getFreshAssignment = async () => { throw new Error("Secret Canvas response"); };
+  await handleCallbackQuery(f.query("a1:d:12:1"), f.runtime);
+  assert.equal(getActivityStatusOverride(f.db, "12:1"), null);
+  assert.match(f.edits.at(-1)[2], /Could not load activities/);
+  assert.doesNotMatch(f.edits.at(-1)[2], /Secret Canvas/);
   f.db.close();
 });
