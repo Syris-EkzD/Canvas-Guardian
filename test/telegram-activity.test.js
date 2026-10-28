@@ -367,3 +367,43 @@ test("week puts the page counter above its heading and retains five-item pages",
   assert.equal(second.markup.inline_keyboard.at(-1)[0].callback_data, "a1:f:w:1");
   f.db.close();
 });
+
+test("large Today lists deliver every activity within Telegram limits", async () => {
+  const f = fixture();
+  f.assignments = Array.from({ length: 80 }, (_, index) => ({
+    key: `12:${index + 1}`, id: String(index + 1), course: "Art",
+    name: `Task ${index + 1} ${"long assignment title ".repeat(5)}`,
+    dueAt: new Date().toISOString(), published: true, submitted: false, excused: false,
+  }));
+  f.runtime.getAssignments = async () => f.assignments;
+  const page = activityPage(f.assignments, f.db, "t", 0);
+  const parts = [page, ...page.additional];
+  assert.ok(parts.length > 1);
+  assert.equal(parts.reduce((count, part) => count + part.markup.inline_keyboard.length - 1, 0), 80);
+  for (const part of parts) {
+    assert.ok(part.text.length <= 4096);
+    assert.ok(part.markup.inline_keyboard.length <= 100);
+    assert.match(part.text, /Due today: 80/);
+  }
+  assert.deepEqual(parts.flatMap(part => part.markup.inline_keyboard.slice(0, -1).map(row => row[0].callback_data)),
+    f.assignments.map(item => `a1:s:${item.key}`));
+  await handleMessage({ chat: { id: 42, type: "private" }, from: { id: 42 }, text: "/today" }, f.runtime);
+  assert.equal(f.sent.length, parts.length);
+  assert.ok(f.sent.every(([, text]) => text.length <= 4096));
+  f.db.close();
+});
+
+test("cached mutations propagate SQLite failures after fresh Canvas verification", async () => {
+  const f = fixture();
+  f.runtime.assignmentCache = createAssignmentCache(f.runtime.getAssignments);
+  let verified = 0;
+  f.runtime.getFreshAssignment = async assignment => { verified++; return assignment; };
+  const processor = createUpdateProcessor(40, async () => {}, () => {},
+    () => false, () => {}, query => handleCallbackQuery(query, f.runtime));
+  f.db.close();
+  await assert.rejects(processor.process({ update_id: 40,
+    callback_query: f.query("a1:d:12:1") }), /database connection is not open/);
+  assert.equal(verified, 1);
+  assert.equal(processor.getOffset(), 40);
+  assert.equal(f.edits.some(edit => /Dismissed\./.test(edit[2])), false);
+});

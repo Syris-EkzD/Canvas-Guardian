@@ -224,10 +224,35 @@ function activityPage(assignments, db, view, page, now) {
   const label = `${labels[view]}: ${items.length}`;
   const counter = `Page ${page + 1}/${maxPage + 1}`;
   const heading = view === "t" ? label : view === "w" ? `${counter}\n${label}` : `${label}\n${counter}`;
-  return {
+  const display = {
     text: `${heading}\n\n${lines.join("\n\n") || "No matching activities found."}`,
     markup: { inline_keyboard: rows },
   };
+  if (view !== "t" || (display.text.length <= 4096 && rows.length <= 100)) return display;
+
+  // Telegram caps message text and inline keyboards. Keep ordinary Today lists
+  // together, but deliver every activity when a single message cannot fit.
+  const groups = [];
+  let group = [];
+  let length = label.length + 32;
+  for (let index = 0; index < lines.length; index++) {
+    if (group.length && (length + lines[index].length + 2 > 3800 || group.length >= 90)) {
+      groups.push(group);
+      group = [];
+      length = label.length + 32;
+    }
+    group.push(index);
+    length += lines[index].length + 2;
+  }
+  if (group.length) groups.push(group);
+  const parts = groups.map((indices, index) => ({
+    text: `${label} (${index + 1}/${groups.length})\n\n${indices.map(i => lines[i]).join("\n\n")}`,
+    markup: { inline_keyboard: [
+      ...indices.map(i => rows[i]),
+      [{ text: "🔄 Refresh from Canvas", callback_data: "a1:f:t:0" }],
+    ] },
+  }));
+  return { ...parts[0], additional: parts.slice(1) };
 }
 
 function activityDetail(db, assignment) {
@@ -274,11 +299,14 @@ async function handleCallbackQuery(query, runtime) {
   }
   await answer("Checking activity…");
   const show = async (display) => {
-    if (query.message.text === display.text) return;
+    if (query.message.text === display.text && !display.additional) return;
     try {
       await telegram.editMessageText(query.message.chat.id, query.message.message_id, display.text, display.markup);
     } catch {
       await telegram.sendMessage(query.message.chat.id, display.text, display.markup);
+    }
+    for (const part of display.additional ?? []) {
+      await telegram.sendMessage(query.message.chat.id, part.text, part.markup);
     }
   };
   const navigation = { inline_keyboard: [[
@@ -709,6 +737,9 @@ async function handleMessage(message, runtime) {
   const view = { "/pending": "p", "/today": "t", "/week": "w", "/activities": "a" }[command];
   const display = activityPage(assignments, db, view, 0);
   await send(message.chat.id, display.text, display.markup);
+  for (const part of display.additional ?? []) {
+    await send(message.chat.id, part.text, part.markup);
+  }
 }
 
 async function initializeOffset(db, call) {
