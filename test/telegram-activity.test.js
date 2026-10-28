@@ -130,6 +130,19 @@ test("expired callback acknowledgments do not block authorized updates or later 
   f.db.close();
 });
 
+test("callback persistence failures propagate and retain the polling offset", async () => {
+  const f = fixture();
+  const processor = createUpdateProcessor(30, async () => {}, () => {},
+    () => false, () => {}, (query) => handleCallbackQuery(query, f.runtime));
+  f.db.close();
+
+  await assert.rejects(
+    processor.process({ update_id: 30, callback_query: f.query("a1:d:12:1") }),
+    /database connection is not open/
+  );
+  assert.equal(processor.getOffset(), 30);
+});
+
 test("obsolete Telegram message falls back to a fresh activity message", async () => {
   const f = fixture();
   f.runtime.telegram.editMessageText = async () => { throw new Error("private Telegram detail"); };
