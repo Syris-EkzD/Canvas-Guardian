@@ -129,49 +129,67 @@ test("Canvas failures do not end report handling or expose API details", async (
   assert.equal(f.sent.at(-1), "Academic report ready.");
 });
 
-test("polling handles later commands while a report runs but checkpoints only finished work", async () => {
+test("background reports do not delay polling offsets; interrupted uploads need a retry", async () => {
   let release;
   const pending = new Promise((resolve) => { release = resolve; });
   const handled = [];
-  const checkpoints = [];
+  const persisted = [];
+  const handler = async (message) => {
+    handled.push(message.kind);
+    if (message.kind === "report") await pending;
+  };
   const processor = createUpdateProcessor(
-    10,
-    async (message) => {
-      handled.push(message.kind);
-      if (message.kind === "report") await pending;
-    },
-    (offset) => checkpoints.push(offset),
+    10, handler, (offset) => persisted.push(offset),
     (message) => message.kind === "report",
     (error) => { throw error; }
   );
 
   await processor.process({ update_id: 10, message: { kind: "report" } });
+  assert.deepEqual(persisted, [11]);
   await processor.process({ update_id: 11, message: { kind: "status" } });
   assert.deepEqual(handled, ["report", "status"]);
   assert.equal(processor.getOffset(), 12);
-  assert.deepEqual(checkpoints, []);
+  assert.deepEqual(persisted, [11, 12]);
+
+  // After the next getUpdates(12) Telegram confirms both updates, even
+  // though the report promise is still pending. Restart cannot replay it.
+  const restarted = createUpdateProcessor(
+    persisted.at(-1), handler, (offset) => persisted.push(offset),
+    (message) => message.kind === "report", () => {}
+  );
+  await restarted.process({ update_id: 10, message: { kind: "report" } });
+  assert.deepEqual(handled, ["report", "status"]);
   release();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(checkpoints, [11, 12]);
-  await processor.process({ update_id: 11, message: { kind: "stale" } });
-  assert.deepEqual(handled, ["report", "status"]);
+  assert.deepEqual(persisted, [11, 12]);
 });
 
-test("a failed background report also releases the durable checkpoint", async () => {
+test("a failed background report is reported without blocking later commands", async () => {
   let rejectReport;
   const failure = new Promise((resolve, reject) => { rejectReport = reject; });
-  const checkpoints = [];
+  const offsets = [];
   const errors = [];
-  const processor = createUpdateProcessor(5, () => failure,
-    (offset) => checkpoints.push(offset), () => true,
-    (error) => errors.push(error.message));
-  await processor.process({ update_id: 5, message: { document: {} } });
-  assert.equal(processor.getOffset(), 6);
-  assert.deepEqual(checkpoints, []);
+  const seen = [];
+  const processor = createUpdateProcessor(5, (message) => {
+    seen.push(message.kind);
+    return message.kind === "report" ? failure : Promise.resolve();
+  }, (offset) => offsets.push(offset), (message) => message.kind === "report",
+  (error) => errors.push(error.message));
+  await processor.process({ update_id: 5, message: { kind: "report" } });
+  await processor.process({ update_id: 6, message: { kind: "status" } });
+  assert.deepEqual(offsets, [6, 7]);
   rejectReport(new Error("report failed"));
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(errors, ["report failed"]);
-  assert.deepEqual(checkpoints, [6]);
+  assert.deepEqual(seen, ["report", "status"]);
+});
+
+test("failed offset persistence does not advance the in-memory polling offset", async () => {
+  const processor = createUpdateProcessor(5, async () => {}, () => {
+    throw new Error("SQLite unavailable");
+  }, () => false, () => {});
+  await assert.rejects(processor.process({ update_id: 5, message: {} }), /SQLite unavailable/);
+  assert.equal(processor.getOffset(), 5);
 });
 
 test("a timed-out Canvas report frees the report slot", async () => {
