@@ -64,8 +64,9 @@ detailed academic pipeline flow is documented in
 | `/report` | Explain how to upload one Roll Call CSV for an Excel report |
 | `/help` | Show all available commands |
 
-Activity lists show five items per page and use a 60-second in-memory snapshot
-for faster navigation. **Refresh from Canvas** reloads a list immediately.
+Pending, Week, and Saved activity lists show five items per page; Today
+shows all due-today activities without pagination. These lists use a 60-second
+in-memory snapshot for faster navigation. **Refresh from Canvas** reloads a list immediately.
 Manual status changes verify the selected assignment's current Canvas submission
 before updating the local Guardian status. The original Canvas submission is
 never modified by these controls.

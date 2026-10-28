@@ -205,18 +205,22 @@ function activityCandidates(assignments, db, view, now = new Date()) {
 function activityPage(assignments, db, view, page, now) {
   const labels = { p: "📚 Pending activities", t: "📅 Due today", w: "🗓 Due within 7 days", a: "🗂 Saved activity statuses" };
   const items = activityCandidates(assignments, db, view, now);
-  const maxPage = Math.max(0, Math.ceil(items.length / PAGE_SIZE) - 1);
+  const pageSize = view === "t" ? Math.max(items.length, 1) : PAGE_SIZE;
+  const maxPage = Math.max(0, Math.ceil(items.length / pageSize) - 1);
   page = Math.min(page, maxPage);
-  const shown = items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const lines = shown.map((item, index) => `${page * PAGE_SIZE + index + 1}. [${String(item.course).slice(0, 45)}] ${String(item.name).slice(0, 100)}\nDue: ${formatDate(item.dueAt)}${view === "a" ? `\nGuardian: ${getEffectiveActivityStatus(db, item).replace("_", " ")}` : ""}`);
-  const rows = shown.map((item, index) => [{ text: `${page * PAGE_SIZE + index + 1}. ${item.name}`.slice(0, 55), callback_data: `a1:s:${item.key}` }]);
+  const shown = items.slice(page * pageSize, (page + 1) * pageSize);
+  const lines = shown.map((item, index) => `${page * pageSize + index + 1}. [${String(item.course).slice(0, 45)}] ${String(item.name).slice(0, 100)}\nDue: ${formatDate(item.dueAt)}${view === "a" ? `\nGuardian: ${getEffectiveActivityStatus(db, item).replace("_", " ")}` : ""}`);
+  const rows = shown.map((item, index) => [{ text: `${page * pageSize + index + 1}. ${item.name}`.slice(0, 55), callback_data: `a1:s:${item.key}` }]);
   const navigation = [];
   if (page > 0) navigation.push({ text: "◀ Previous", callback_data: `a1:l:${view}:${page - 1}` });
   if (page < maxPage) navigation.push({ text: "Next ▶", callback_data: `a1:l:${view}:${page + 1}` });
   if (navigation.length) rows.push(navigation);
   rows.push([{ text: "🔄 Refresh from Canvas", callback_data: `a1:f:${view}:${page}` }]);
+  const label = `${labels[view]}: ${items.length}`;
+  const counter = `Page ${page + 1}/${maxPage + 1}`;
+  const heading = view === "t" ? label : view === "w" ? `${counter}\n${label}` : `${label}\n${counter}`;
   return {
-    text: `${labels[view]}: ${items.length}\nPage ${page + 1}/${maxPage + 1}\n\n${lines.join("\n\n") || "No matching activities found."}`,
+    text: `${heading}\n\n${lines.join("\n\n") || "No matching activities found."}`,
     markup: { inline_keyboard: rows },
   };
 }

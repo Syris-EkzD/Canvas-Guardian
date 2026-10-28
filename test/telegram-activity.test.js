@@ -280,3 +280,44 @@ test("failed fresh Canvas verification never changes a Guardian status", async (
   assert.doesNotMatch(f.edits.at(-1)[2], /Secret Canvas/);
   f.db.close();
 });
+
+test("today displays every due-today activity without pagination or a page counter", () => {
+  const f = fixture();
+  const now = new Date("2026-10-25T01:00:00Z");
+  const today = activityPage(f.assignments, f.db, "t", 0, now);
+  assert.match(today.text, /^📅 Due today: 10\n\n/);
+  assert.doesNotMatch(today.text, /Page 1\/\d+/);
+  assert.match(today.text, /10\. \[Art\] Task 10/);
+  assert.equal(today.markup.inline_keyboard.length, 11);
+  assert.equal(today.markup.inline_keyboard[9][0].callback_data, "a1:s:12:10");
+  assert.deepEqual(today.markup.inline_keyboard.at(-1), [
+    { text: "🔄 Refresh from Canvas", callback_data: "a1:f:t:0" },
+  ]);
+  const oldPage = activityPage(f.assignments, f.db, "t", 1, now);
+  assert.deepEqual(oldPage, today);
+  const empty = activityPage(f.assignments, f.db, "t", 0, new Date("2026-10-26T01:00:00Z"));
+  assert.match(empty.text, /^📅 Due today: 0\n\nNo matching activities found\./);
+  assert.doesNotMatch(empty.text, /Page \d+\/\d+/);
+  f.db.close();
+});
+
+test("week puts the page counter above its heading and retains five-item pages", () => {
+  const f = fixture();
+  const now = new Date("2026-10-24T01:00:00Z");
+  const first = activityPage(f.assignments, f.db, "w", 0, now);
+  assert.match(first.text, /^Page 1\/2\n🗓 Due within 7 days: 10\n\n/);
+  assert.match(first.text, /Task 5/);
+  assert.doesNotMatch(first.text, /Task 6/);
+  assert.equal(first.markup.inline_keyboard.length, 7);
+  assert.equal(first.markup.inline_keyboard.at(-2)[0].callback_data, "a1:l:w:1");
+  assert.equal(first.markup.inline_keyboard.at(-1)[0].callback_data, "a1:f:w:0");
+
+  const second = activityPage(f.assignments, f.db, "w", 1, now);
+  assert.match(second.text, /^Page 2\/2\n🗓 Due within 7 days: 10\n\n/);
+  assert.match(second.text, /Task 6/);
+  assert.match(second.text, /Task 10/);
+  assert.doesNotMatch(second.text, /Task 5\n/);
+  assert.equal(second.markup.inline_keyboard.at(-2)[0].callback_data, "a1:l:w:0");
+  assert.equal(second.markup.inline_keyboard.at(-1)[0].callback_data, "a1:f:w:1");
+  f.db.close();
+});
