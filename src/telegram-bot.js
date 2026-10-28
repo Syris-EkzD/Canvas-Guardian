@@ -1,7 +1,7 @@
 const path = require("path");
 const Database = require("better-sqlite3");
 const { canvasGetAll } = require("./canvas-client");
-const { getAllActiveCourseAssignments } = require("./canvas-assignments");
+const { getAllActiveCourseAssignments, getAssignmentByKey } = require("./canvas-assignments");
 const {
   filterActivitiesDueToday,
   filterActivitiesDueWithinWeek,
@@ -24,7 +24,8 @@ const {
 
 const DEFAULT_CSV_LIMIT = 5 * 1024 * 1024;
 const REPORT_TIMEOUT_MS = 120_000;
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 5;
+const ASSIGNMENT_CACHE_TTL_MS = 60_000;
 const COMMANDS = Object.freeze([
   { command: "start", description: "Start automatic monitoring" },
   { command: "stop", description: "Stop automatic monitoring" },
@@ -122,6 +123,37 @@ function createUpdateProcessor(initialOffset, handle, persist, isReport, onBackg
   };
 }
 
+function createAssignmentCache(loadAssignments, ttlMs = ASSIGNMENT_CACHE_TTL_MS, now = Date.now) {
+  let assignments = null;
+  let loadedAt = 0;
+  let inFlight = null;
+
+  return {
+    async get({ force = false } = {}) {
+      if (!force && assignments !== null && now() - loadedAt < ttlMs) {
+        return assignments;
+      }
+      if (inFlight) return inFlight;
+
+      inFlight = Promise.resolve().then(loadAssignments).then((items) => {
+        assignments = items;
+        loadedAt = now();
+        return assignments;
+      }).finally(() => {
+        inFlight = null;
+      });
+      return inFlight;
+    },
+    update(assignment) {
+      if (!assignments) return;
+      const index = assignments.findIndex((item) => item.key === assignment.key);
+      if (index < 0) return;
+      assignments = assignments.slice();
+      assignments[index] = assignment;
+    },
+  };
+}
+
 function createDatabase() {
   const db = new Database(path.join(__dirname, "..", "data", "horus.db"));
 
@@ -182,6 +214,7 @@ function activityPage(assignments, db, view, page, now) {
   if (page > 0) navigation.push({ text: "◀ Previous", callback_data: `a1:l:${view}:${page - 1}` });
   if (page < maxPage) navigation.push({ text: "Next ▶", callback_data: `a1:l:${view}:${page + 1}` });
   if (navigation.length) rows.push(navigation);
+  rows.push([{ text: "🔄 Refresh from Canvas", callback_data: `a1:f:${view}:${page}` }]);
   return {
     text: `${labels[view]}: ${items.length}\nPage ${page + 1}/${maxPage + 1}\n\n${lines.join("\n\n") || "No matching activities found."}`,
     markup: { inline_keyboard: rows },
@@ -197,7 +230,6 @@ function activityDetail(db, assignment) {
   } else if (["completed_offline", "dismissed"].includes(status)) {
     rows.push([{ text: "↩ Restore Pending", callback_data: `a1:r:${assignment.key}` }]);
   }
-  rows.push([{ text: "🔄 View current status", callback_data: `a1:s:${assignment.key}` }]);
   rows.push([{ text: "📚 Pending", callback_data: "a1:l:p:0" }, { text: "🗂 Saved", callback_data: "a1:l:a:0" }]);
   return {
     text: `[${assignment.course}] ${assignment.name}\nDue: ${formatDate(assignment.dueAt)}\nCanvas submission: ${assignment.submitted ? "Submitted" : "Not submitted"}\nGuardian status: ${status?.replace("_", " ") || "Unavailable"}${assignment.htmlUrl ? `\n${assignment.htmlUrl}` : ""}`,
@@ -206,7 +238,8 @@ function activityDetail(db, assignment) {
 }
 
 async function handleCallbackQuery(query, runtime) {
-  const { db, allowedChatId, telegram, getAssignments = getAllActiveCourseAssignments } = runtime;
+  const { db, allowedChatId, telegram, assignmentCache, getAssignments = getAllActiveCourseAssignments,
+    getFreshAssignment = getAssignmentByKey } = runtime;
   if (!query?.id) return;
   const answer = (text) => telegram.answerCallbackQuery(query.id, text);
   if (query.message?.chat?.type !== "private" ||
@@ -217,8 +250,9 @@ async function handleCallbackQuery(query, runtime) {
   }
   const data = query.data;
   const list = /^a1:l:([ptwa]):(0|[1-9]\d{0,5})$/.exec(data);
+  const refresh = /^a1:f:([ptwa]):(0|[1-9]\d{0,5})$/.exec(data);
   const item = /^a1:([scdr]):([1-9]\d*:[1-9]\d*)$/.exec(data);
-  if (typeof data !== "string" || Buffer.byteLength(data) > 64 || (!list && !item)) {
+  if (typeof data !== "string" || Buffer.byteLength(data) > 64 || (!list && !refresh && !item)) {
     await answer("This button is no longer valid. Use /pending or /activities.");
     return;
   }
@@ -236,19 +270,31 @@ async function handleCallbackQuery(query, runtime) {
     { text: "🗂 Saved", callback_data: "a1:l:a:0" },
   ]] };
   try {
-    const assignments = await getAssignments();
+    const assignments = assignmentCache
+      ? await assignmentCache.get({ force: Boolean(refresh) })
+      : await getAssignments();
     let display;
     let notice = "";
-    if (list) {
-      display = activityPage(assignments, db, list[1], Number(list[2]));
+    if (list || refresh) {
+      const target = list || refresh;
+      display = activityPage(assignments, db, target[1], Number(target[2]));
     } else {
-      const assignment = assignments.find((entry) => entry.key === item[2]);
+      let assignment = assignments.find((entry) => entry.key === item[2]);
       if (!assignment) {
         await show({ text: "Activity no longer found. Open a fresh list.", markup: navigation });
         return;
       }
-      const current = getEffectiveActivityStatus(db, assignment);
       const desired = { c: "completed_offline", d: "dismissed", r: "pending" }[item[1]];
+      if (desired && assignmentCache) {
+        // Cached lists are for browsing only. Mutations require fresh Canvas state.
+        const verified = await getFreshAssignment(assignment);
+        if (!verified || verified.key !== assignment.key) {
+          throw new Error("Canvas returned a different assignment");
+        }
+        assignmentCache.update(verified);
+        assignment = verified;
+      }
+      const current = getEffectiveActivityStatus(db, assignment);
       if (desired) {
         if (current === "submitted" || current === null) {
           notice = "Canvas status changed; no local status was changed.";
@@ -363,7 +409,8 @@ async function sendAnnouncementList(send, chatId, announcements) {
 }
 
 async function handleMessage(message, runtime) {
-  const { db, allowedChatId, send, reportDocument, getAssignments = getAllActiveCourseAssignments } = runtime;
+  const { db, allowedChatId, send, reportDocument, assignmentCache,
+    getAssignments = getAllActiveCourseAssignments } = runtime;
 
   if (!message?.chat) {
     return;
@@ -636,7 +683,7 @@ async function handleMessage(message, runtime) {
     return;
   }
 
-  const assignments = await getAssignments();
+  const assignments = assignmentCache ? await assignmentCache.get() : await getAssignments();
   const view = { "/pending": "p", "/today": "t", "/week": "w", "/activities": "a" }[command];
   const display = activityPage(assignments, db, view, 0);
   await send(message.chat.id, display.text, display.markup);
@@ -684,6 +731,7 @@ async function main() {
     send,
     reportDocument,
     telegram,
+    assignmentCache: createAssignmentCache(getAllActiveCourseAssignments),
   };
   const processMessage = async (message) => {
     try {
@@ -726,7 +774,7 @@ async function main() {
   }
 }
 
-module.exports = { COMMANDS, activityPage, createReportHandler, createUpdateProcessor, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
+module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
 
 if (require.main === module) {
   main().catch((error) => {
