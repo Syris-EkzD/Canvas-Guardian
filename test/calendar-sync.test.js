@@ -253,7 +253,9 @@ for (const scenario of [
   test(`removes a mapped event when an assignment ${scenario.name}`, async () => {
     const db = createDb();
     saveMapping(db);
-    const fake = createFakeCalendar();
+    const fake = createFakeCalendar({
+      remoteEvents: [managedRemoteEvent(assignment(), "mapped-event")],
+    });
 
     const result = await sync({
       db,
@@ -274,6 +276,7 @@ for (const status of [404, 410]) {
     const db = createDb();
     saveMapping(db);
     const fake = createFakeCalendar({
+      remoteEvents: [managedRemoteEvent(assignment(), "mapped-event")],
       deleteStatuses: { "mapped-event": status },
     });
 
@@ -309,6 +312,7 @@ test("retains the mapping and propagates unexpected remote deletion failures", a
   const db = createDb();
   saveMapping(db);
   const fake = createFakeCalendar({
+    remoteEvents: [managedRemoteEvent(assignment(), "mapped-event")],
     deleteStatuses: { "mapped-event": 500 },
   });
 
@@ -328,6 +332,7 @@ for (const status of [404, 410]) {
     const current = assignment({ name: `Changed after ${status}` });
     const replacementId = `replacement-${status}`;
     const fake = createFakeCalendar({
+      remoteEvents: [managedRemoteEvent(current, "mapped-event")],
       updateStatuses: { "mapped-event": status },
       insertIds: [replacementId],
     });
@@ -350,6 +355,7 @@ test("does not save a replacement mapping when Google returns no recreated event
   const db = createDb();
   saveMapping(db, { contentHash: "stale-content" });
   const fake = createFakeCalendar({
+    remoteEvents: [managedRemoteEvent(assignment(), "mapped-event")],
     updateStatuses: { "mapped-event": 404 },
     insertIds: [null],
   });
@@ -590,13 +596,16 @@ test("updates a changed mapped event and refreshes its hash", async () => {
     contentHash: "stale-content",
   });
 
-  const fake = createFakeCalendar();
+  const fake = createFakeCalendar({
+    remoteEvents: [managedRemoteEvent(current, "mapped-event")],
+  });
   const result = await sync({
     db,
     assignments: [current],
     fake,
   });
 
+  assert.equal(fake.calls.get.length, 1);
   assert.equal(fake.calls.update.length, 1);
   assert.equal(fake.calls.insert.length, 0);
   assert.equal(
@@ -604,6 +613,71 @@ test("updates a changed mapped event and refreshes its hash", async () => {
     createContentHash(buildGoogleEvent(current))
   );
   assert.equal(result.updated, 1);
+  db.close();
+});
+
+test("rejects mapped updates with unexpected ownership before a write", async () => {
+  const db = createDb();
+  const current = assignment({ name: "Changed assignment" });
+  saveMapping(db, { contentHash: "stale-content" });
+  const fake = createFakeCalendar({
+    remoteEvents: [managedRemoteEvent({ key: "someone-else" }, "mapped-event")],
+  });
+
+  await assert.rejects(sync({ db, assignments: [current], fake }), /unexpected ownership/);
+  assert.equal(fake.calls.get.length, 1);
+  assert.equal(fake.calls.update.length, 0);
+  assert.equal(fake.calls.insert.length, 0);
+  assert.equal(getMapping(db).content_hash, "stale-content");
+  db.close();
+});
+
+test("rejects mapped deletions with unexpected ownership without deleting a mapping", async () => {
+  const db = createDb();
+  saveMapping(db);
+  const fake = createFakeCalendar({
+    remoteEvents: [managedRemoteEvent({ key: "someone-else" }, "mapped-event")],
+  });
+
+  await assert.rejects(sync({ db, assignments: [], fake }), /unexpected ownership/);
+  assert.equal(fake.calls.delete.length, 0);
+  assert.equal(getMapping(db).google_event_id, "mapped-event");
+  db.close();
+});
+
+for (const status of [404, 410]) {
+  test(`removes a stale mapping without deleting a missing event on GET ${status}`, async () => {
+    const db = createDb();
+    saveMapping(db);
+    const fake = createFakeCalendar({ getStatuses: { "mapped-event": status } });
+    const result = await sync({ db, assignments: [], fake });
+    assert.equal(fake.calls.delete.length, 0);
+    assert.equal(getMapping(db), undefined);
+    assert.equal(result.removed, 1);
+    db.close();
+  });
+}
+
+test("recovers a missing changed mapping without updating the missing event", async () => {
+  const db = createDb();
+  const current = assignment({ name: "Changed assignment" });
+  saveMapping(db, { contentHash: "stale-content" });
+  const fake = createFakeCalendar();
+  const result = await sync({ db, assignments: [current], fake });
+  assert.equal(fake.calls.update.length, 0);
+  assert.equal(fake.calls.insert.length, 1);
+  assert.equal(result.created, 1);
+  assert.equal(getMapping(db).google_event_id, "inserted-1");
+  db.close();
+});
+
+test("propagates mapped ownership lookup errors without deleting or updating", async () => {
+  const db = createDb();
+  saveMapping(db);
+  const fake = createFakeCalendar({ getStatuses: { "mapped-event": 500 } });
+  await assert.rejects(sync({ db, assignments: [], fake }), /Google error 500/);
+  assert.equal(fake.calls.delete.length, 0);
+  assert.equal(getMapping(db).google_event_id, "mapped-event");
   db.close();
 });
 

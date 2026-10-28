@@ -16,7 +16,7 @@
   "dependencies": {
     "@google/genai": "^2.31.0",
     "better-sqlite3": "^13.0.3",
-    "csv-parse": "^6.2.1",
+    "csv-parse": "^7.0.3",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "googleapis": "^174.0.1",

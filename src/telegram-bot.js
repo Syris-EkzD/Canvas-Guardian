@@ -111,13 +111,18 @@ function createUpdateProcessor(initialOffset, handle, persist, isReport, onBackg
       if (update.callback_query) {
         await handleCallback(update.callback_query);
       } else if (isReport(update.message)) {
-        void handle(update.message).catch(onBackgroundError);
+        // Reports run in the background so other commands remain responsive.
+        // Telegram acknowledges an update on the next getUpdates call with a
+        // higher offset; this checkpoint cannot guarantee report recovery.
+        const work = handle(update.message);
+        void Promise.resolve(work).catch(onBackgroundError);
       } else {
         await handle(update.message);
       }
 
-      offset = update.update_id + 1;
-      persist(offset);
+      const nextOffset = update.update_id + 1;
+      persist(nextOffset);
+      offset = nextOffset;
     },
   };
 }
@@ -208,7 +213,14 @@ function activityDetail(db, assignment) {
 async function handleCallbackQuery(query, runtime) {
   const { db, allowedChatId, telegram, getAssignments = getAllActiveCourseAssignments } = runtime;
   if (!query?.id) return;
-  const answer = (text) => telegram.answerCallbackQuery(query.id, text);
+  const answer = async (text) => {
+    try {
+      await telegram.answerCallbackQuery(query.id, text);
+    } catch {
+      // An expired callback must not block activity handling or later updates.
+      (runtime.logger ?? console).warn("Telegram callback acknowledgment failed; continuing.");
+    }
+  };
   if (query.message?.chat?.type !== "private" ||
       String(query.message.chat.id) !== String(allowedChatId) ||
       String(query.from?.id) !== String(allowedChatId)) {
@@ -235,42 +247,44 @@ async function handleCallbackQuery(query, runtime) {
     { text: "📚 Pending", callback_data: "a1:l:p:0" },
     { text: "🗂 Saved", callback_data: "a1:l:a:0" },
   ]] };
+  let assignments;
   try {
-    const assignments = await getAssignments();
-    let display;
-    let notice = "";
-    if (list) {
-      display = activityPage(assignments, db, list[1], Number(list[2]));
-    } else {
-      const assignment = assignments.find((entry) => entry.key === item[2]);
-      if (!assignment) {
-        await show({ text: "Activity no longer found. Open a fresh list.", markup: navigation });
-        return;
-      }
-      const current = getEffectiveActivityStatus(db, assignment);
-      const desired = { c: "completed_offline", d: "dismissed", r: "pending" }[item[1]];
-      if (desired) {
-        if (current === "submitted" || current === null) {
-          notice = "Canvas status changed; no local status was changed.";
-        } else if (current === desired) {
-          notice = "Already in that status.";
-        } else if (desired === "pending" ? current === "pending" : current !== "pending") {
-          notice = "Guardian status changed. Review the current status below.";
-        } else if (desired === "pending") {
-          clearActivityStatusOverride(db, assignment.key);
-          notice = "Restored to Pending.";
-        } else {
-          setActivityStatusOverride(db, assignment.key, desired);
-          notice = desired === "dismissed" ? "Dismissed." : "Marked Completed Offline. Canvas was not changed.";
-        }
-      }
-      display = activityDetail(db, assignment);
-    }
-    if (notice) display.text += `\n\n${notice}`;
-    await show(display);
+    assignments = await getAssignments();
   } catch {
     await show({ text: "Could not load activities. Please try again.", markup: navigation }).catch(() => {});
+    return;
   }
+  let display;
+  let notice = "";
+  if (list) {
+    display = activityPage(assignments, db, list[1], Number(list[2]));
+  } else {
+    const assignment = assignments.find((entry) => entry.key === item[2]);
+    if (!assignment) {
+      await show({ text: "Activity no longer found. Open a fresh list.", markup: navigation });
+      return;
+    }
+    const current = getEffectiveActivityStatus(db, assignment);
+    const desired = { c: "completed_offline", d: "dismissed", r: "pending" }[item[1]];
+    if (desired) {
+      if (current === "submitted" || current === null) {
+        notice = "Canvas status changed; no local status was changed.";
+      } else if (current === desired) {
+        notice = "Already in that status.";
+      } else if (desired === "pending" ? current === "pending" : current !== "pending") {
+        notice = "Guardian status changed. Review the current status below.";
+      } else if (desired === "pending") {
+        clearActivityStatusOverride(db, assignment.key);
+        notice = "Restored to Pending.";
+      } else {
+        setActivityStatusOverride(db, assignment.key, desired);
+        notice = desired === "dismissed" ? "Dismissed." : "Marked Completed Offline. Canvas was not changed.";
+      }
+    }
+    display = activityDetail(db, assignment);
+  }
+  if (notice) display.text += `\n\n${notice}`;
+  await show(display);
 }
 
 function cleanText(html = "") {

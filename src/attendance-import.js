@@ -17,6 +17,9 @@ const requiredHeaders = [
   "Timestamp",
 ];
 const supportedStatuses = new Set(["present", "absent", "late"]);
+const MAX_CSV_BYTES = 20 * 1024 * 1024;
+const MAX_CSV_RECORDS = 100_000;
+const MAX_RECORD_SIZE = 64 * 1024;
 
 function isValidClassDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -66,6 +69,10 @@ function getSafeCsvParseError(error) {
 }
 
 function importAttendance(csvText, canvasUserId) {
+  if (Buffer.byteLength(csvText, "utf8") > MAX_CSV_BYTES) {
+    throw new Error("Attendance CSV exceeds the 20 MiB size limit");
+  }
+
   let rows;
 
   try {
@@ -73,8 +80,16 @@ function importAttendance(csvText, canvasUserId) {
       bom: true,
       skip_empty_lines: true,
       relax_column_count: true,
+      max_record_size: MAX_RECORD_SIZE,
+      on_record(record, context) {
+        if (context.records > MAX_CSV_RECORDS + 1) {
+          throw new Error("Attendance CSV has too many records");
+        }
+        return record;
+      },
     });
   } catch (error) {
+    if (error.message === "Attendance CSV has too many records") throw error;
     throw new Error(getSafeCsvParseError(error));
   }
 
@@ -83,6 +98,9 @@ function importAttendance(csvText, canvasUserId) {
   }
 
   const headers = rows[0].map((header) => String(header).trim());
+  if (new Set(headers).size !== headers.length) {
+    throw new Error("Attendance CSV has duplicate column names");
+  }
   const missingHeaders = requiredHeaders.filter(
     (header) => !headers.includes(header)
   );

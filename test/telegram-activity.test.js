@@ -97,6 +97,52 @@ test("valid callbacks acknowledge before a delayed Canvas response and report fa
   f.db.close();
 });
 
+test("expired callback acknowledgments do not block authorized updates or later commands", async () => {
+  const f = fixture();
+  const warnings = [];
+  f.runtime.logger = { warn: (message) => warnings.push(message) };
+  f.runtime.telegram.answerCallbackQuery = async () => {
+    throw new Error("query is too old");
+  };
+  const offsets = [];
+  const processor = createUpdateProcessor(
+    20,
+    (message) => handleMessage(message, f.runtime),
+    (offset) => offsets.push(offset),
+    () => false,
+    () => {},
+    (query) => handleCallbackQuery(query, f.runtime)
+  );
+  await processor.process({ update_id: 20, callback_query: f.query("a1:d:12:1") });
+  await processor.process({ update_id: 21, message: {
+    chat: { id: 42, type: "private" }, from: { id: 42 }, text: "/status",
+  } });
+  assert.equal(getActivityStatusOverride(f.db, "12:1").status, "dismissed");
+  assert.equal(f.sent.length, 1);
+  assert.match(f.sent[0][1], /Monitoring:/);
+  assert.deepEqual(offsets, [21, 22]);
+  assert.equal(warnings.length, 1);
+
+  // A failed acknowledgment for an unauthorized caller must never grant access.
+  await processor.process({ update_id: 22, callback_query: f.query("a1:d:12:2", 77) });
+  assert.equal(getActivityStatusOverride(f.db, "12:2"), null);
+  assert.equal(warnings.length, 2);
+  f.db.close();
+});
+
+test("callback persistence failures propagate and retain the polling offset", async () => {
+  const f = fixture();
+  const processor = createUpdateProcessor(30, async () => {}, () => {},
+    () => false, () => {}, (query) => handleCallbackQuery(query, f.runtime));
+  f.db.close();
+
+  await assert.rejects(
+    processor.process({ update_id: 30, callback_query: f.query("a1:d:12:1") }),
+    /database connection is not open/
+  );
+  assert.equal(processor.getOffset(), 30);
+});
+
 test("obsolete Telegram message falls back to a fresh activity message", async () => {
   const f = fixture();
   f.runtime.telegram.editMessageText = async () => { throw new Error("private Telegram detail"); };
