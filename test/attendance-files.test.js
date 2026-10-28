@@ -149,6 +149,19 @@ test("rejects conflicting statuses across overlapping files", async () => {
   });
 });
 
+test("bounds combined current-user records across multiple offline CSV files", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const repeated = `${row()}\n`.repeat(50_000);
+    await fs.writeFile(path.join(directory, "a.csv"), `${header}\n${repeated}`);
+    await fs.writeFile(path.join(directory, "b.csv"), `${header}\n${repeated}${row()}`);
+
+    await assert.rejects(
+      loadAttendanceFromDirectory(directory, "7001"),
+      /Attendance CSV files have too many combined records/
+    );
+  });
+});
+
 test("rejects directories with no direct attendance CSV files", async () => {
   await withTemporaryDirectory(async (directory) => {
     const nestedDirectory = path.join(directory, "nested");

@@ -3,6 +3,8 @@ const path = require("node:path");
 
 const { importAttendance } = require("./attendance-import");
 
+const MAX_TOTAL_ATTENDANCE_RECORDS = 100_000;
+
 function getAttendanceEventKey({ courseId, sectionId, classDate }) {
   return `${courseId}\u0000${sectionId}\u0000${classDate}`;
 }
@@ -47,7 +49,11 @@ async function loadAttendanceFromDirectory(inputDirectory, canvasUserId) {
 
   for (const filename of filenames) {
     const csvText = await fs.readFile(path.join(inputDirectory, filename), "utf8");
-    records.push(...importAttendance(csvText, canvasUserId));
+    const imported = importAttendance(csvText, canvasUserId);
+    if (records.length + imported.length > MAX_TOTAL_ATTENDANCE_RECORDS) {
+      throw new Error("Attendance CSV files have too many combined records");
+    }
+    records.push(...imported);
   }
 
   const result = deduplicateAttendance(records);
