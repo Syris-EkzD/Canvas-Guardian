@@ -56,7 +56,26 @@ function getAllActiveCourseAssignments(options) {
   return getActiveCourseAssignmentsWith(canvasGetAll, options);
 }
 
+// Verify one assignment directly before applying a local Guardian status change.
+async function getAssignmentByKey(assignment, options) {
+  const match = /^([1-9]\d*):([1-9]\d*)$/.exec(assignment?.key);
+  if (!match) throw new Error("Invalid assignment key");
+
+  const [, courseId, assignmentId] = match;
+  const current = await canvasGet(
+    `/api/v1/courses/${courseId}/assignments/${assignmentId}?include[]=submission`,
+    options
+  );
+  if (String(current?.id) !== assignmentId ||
+      (current.course_id !== undefined && String(current.course_id) !== courseId)) {
+    throw new Error("Canvas returned a different assignment");
+  }
+
+  return normalizeAssignment({ id: courseId, course_code: assignment.course }, current);
+}
+
 module.exports = {
   getActiveCourseAssignments,
   getAllActiveCourseAssignments,
+  getAssignmentByKey,
 };

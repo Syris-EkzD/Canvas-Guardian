@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   getActiveCourseAssignments,
   getAllActiveCourseAssignments,
+  getAssignmentByKey,
 } = require("../src/canvas-assignments");
 const { isPendingAssignment } = require("../src/activity-logic");
 
@@ -342,4 +343,35 @@ test("submission normalization preserves graded work while keeping graded missin
 
   assert.equal(gradedMissing.submitted, false);
   assert.equal(isPendingAssignment(gradedMissing), true);
+});
+
+test("single-assignment verification fetches fresh submission without listing courses", async () => {
+  const requests = [];
+  global.fetch = async url => {
+    requests.push(url);
+    return response({
+      id: 301, course_id: 20, name: "Studio task",
+      published: true, due_at: "2026-10-30T09:00:00Z",
+      submission: { workflow_state: "submitted", submitted_at: "2026-10-28T08:00:00Z" },
+    });
+  };
+  const assignment = await getAssignmentByKey({ key: "20:301", course: "ART 123" });
+  assert.deepEqual(requests, [
+    `${baseUrl}/api/v1/courses/20/assignments/301?include[]=submission`,
+  ]);
+  assert.equal(assignment.key, "20:301");
+  assert.equal(assignment.course, "ART 123");
+  assert.equal(assignment.submitted, true);
+});
+
+test("single-assignment verification rejects mismatched Canvas identity", async () => {
+  global.fetch = async () => response({ id: 999, course_id: 20 });
+  await assert.rejects(
+    getAssignmentByKey({ key: "20:301", course: "ART" }),
+    /different assignment/
+  );
+  await assert.rejects(
+    getAssignmentByKey({ key: "../20:301", course: "ART" }),
+    /Invalid assignment key/
+  );
 });
