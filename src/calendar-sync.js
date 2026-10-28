@@ -149,16 +149,42 @@ function isGoneGoogleStatus(error) {
   return [404, 410].includes(getGoogleStatus(error));
 }
 
-async function deleteManagedGoogleEvent(calendar, calendarId, eventId) {
+async function isOwnedMappedGoogleEvent(calendar, calendarId, eventId, assignmentKey) {
+  let remote;
   try {
-    await calendar.events.delete({
+    remote = (await calendar.events.get({
       calendarId,
       eventId,
-    });
+      fields: "id,status,extendedProperties",
+    })).data;
   } catch (error) {
-    if (!isGoneGoogleStatus(error)) {
-      throw error;
-    }
+    if (isGoneGoogleStatus(error)) return false;
+    throw error;
+  }
+
+  if (remote?.status === "cancelled") return false;
+  const properties = remote?.extendedProperties?.private;
+  if (
+    remote?.id !== eventId ||
+    properties?.managedBy !== "horus" ||
+    properties?.canvasAssignmentKey !== assignmentKey
+  ) {
+    throw new Error(
+      `Mapped Google Calendar event has unexpected ownership for ${assignmentKey}`
+    );
+  }
+  return true;
+}
+
+async function deleteManagedGoogleEvent(calendar, calendarId, eventId, assignmentKey) {
+  if (!await isOwnedMappedGoogleEvent(calendar, calendarId, eventId, assignmentKey)) {
+    return; // Already missing: remove only the stale local mapping.
+  }
+
+  try {
+    await calendar.events.delete({ calendarId, eventId });
+  } catch (error) {
+    if (!isGoneGoogleStatus(error)) throw error;
   }
 }
 
@@ -398,7 +424,8 @@ async function syncCalendarAssignments({
     await deleteManagedGoogleEvent(
       calendar,
       calendarId,
-      mapping.google_event_id
+      mapping.google_event_id,
+      mapping.assignment_key
     );
 
     deleteMapping.run(mapping.assignment_key);
@@ -537,13 +564,21 @@ async function syncCalendarAssignments({
       continue;
     }
 
-    try {
-      await calendar.events.update({
-        calendarId,
-        eventId: existing.google_event_id,
-        requestBody: event,
-      });
+    let updatedExisting = false;
+    if (await isOwnedMappedGoogleEvent(calendar, calendarId, existing.google_event_id, activity.key)) {
+      try {
+        await calendar.events.update({
+          calendarId,
+          eventId: existing.google_event_id,
+          requestBody: event,
+        });
+        updatedExisting = true;
+      } catch (error) {
+        if (!isGoneGoogleStatus(error)) throw error;
+      }
+    }
 
+    if (updatedExisting) {
       saveMapping.run(
         activity.key,
         existing.google_event_id,
@@ -551,38 +586,34 @@ async function syncCalendarAssignments({
         contentHash,
         new Date(now).toISOString()
       );
-
       updated += 1;
       log(`Updated: ${activity.name}`);
-    } catch (error) {
-      if (!isGoneGoogleStatus(error)) {
-        throw error;
-      }
+      continue;
+    }
 
-      const result = await recoverOrCreateGoogleEvent({
-        calendar,
-        calendarId,
-        activity,
-        event,
-        now,
-        skipNewPastDue: false,
-      });
+    const result = await recoverOrCreateGoogleEvent({
+      calendar,
+      calendarId,
+      activity,
+      event,
+      now,
+      skipNewPastDue: false,
+    });
 
-      saveMapping.run(
-        activity.key,
-        result.eventId,
-        activity.dueAt,
-        contentHash,
-        new Date(now).toISOString()
-      );
+    saveMapping.run(
+      activity.key,
+      result.eventId,
+      activity.dueAt,
+      contentHash,
+      new Date(now).toISOString()
+    );
 
-      if (result.recovered) {
-        recovered += 1;
-        log(`Recovered: ${activity.name}`);
-      } else {
-        created += 1;
-        log(`Recreated: ${activity.name}`);
-      }
+    if (result.recovered) {
+      recovered += 1;
+      log(`Recovered: ${activity.name}`);
+    } else {
+      created += 1;
+      log(`Recreated: ${activity.name}`);
     }
   }
 

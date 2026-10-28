@@ -1,7 +1,7 @@
 const path = require("path");
 const Database = require("better-sqlite3");
 const { canvasGetAll } = require("./canvas-client");
-const { getAllActiveCourseAssignments } = require("./canvas-assignments");
+const { getAllActiveCourseAssignments, getAssignmentByKey } = require("./canvas-assignments");
 const {
   filterActivitiesDueToday,
   filterActivitiesDueWithinWeek,
@@ -24,7 +24,8 @@ const {
 
 const DEFAULT_CSV_LIMIT = 5 * 1024 * 1024;
 const REPORT_TIMEOUT_MS = 120_000;
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 5;
+const ASSIGNMENT_CACHE_TTL_MS = 60_000;
 const COMMANDS = Object.freeze([
   { command: "start", description: "Start automatic monitoring" },
   { command: "stop", description: "Stop automatic monitoring" },
@@ -111,13 +112,49 @@ function createUpdateProcessor(initialOffset, handle, persist, isReport, onBackg
       if (update.callback_query) {
         await handleCallback(update.callback_query);
       } else if (isReport(update.message)) {
-        void handle(update.message).catch(onBackgroundError);
+        // Reports run in the background so other commands remain responsive.
+        // Telegram acknowledges an update on the next getUpdates call with a
+        // higher offset; this checkpoint cannot guarantee report recovery.
+        const work = handle(update.message);
+        void Promise.resolve(work).catch(onBackgroundError);
       } else {
         await handle(update.message);
       }
 
-      offset = update.update_id + 1;
-      persist(offset);
+      const nextOffset = update.update_id + 1;
+      persist(nextOffset);
+      offset = nextOffset;
+    },
+  };
+}
+
+function createAssignmentCache(loadAssignments, ttlMs = ASSIGNMENT_CACHE_TTL_MS, now = Date.now) {
+  let assignments = null;
+  let loadedAt = 0;
+  let inFlight = null;
+
+  return {
+    async get({ force = false } = {}) {
+      if (!force && assignments !== null && now() - loadedAt < ttlMs) {
+        return assignments;
+      }
+      if (inFlight) return inFlight;
+
+      inFlight = Promise.resolve().then(loadAssignments).then((items) => {
+        assignments = items;
+        loadedAt = now();
+        return assignments;
+      }).finally(() => {
+        inFlight = null;
+      });
+      return inFlight;
+    },
+    update(assignment) {
+      if (!assignments) return;
+      const index = assignments.findIndex((item) => item.key === assignment.key);
+      if (index < 0) return;
+      assignments = assignments.slice();
+      assignments[index] = assignment;
     },
   };
 }
@@ -173,19 +210,49 @@ function activityCandidates(assignments, db, view, now = new Date()) {
 function activityPage(assignments, db, view, page, now) {
   const labels = { p: "📚 Pending activities", t: "📅 Due today", w: "🗓 Due within 7 days", a: "🗂 Saved activity statuses" };
   const items = activityCandidates(assignments, db, view, now);
-  const maxPage = Math.max(0, Math.ceil(items.length / PAGE_SIZE) - 1);
+  const pageSize = view === "t" ? Math.max(items.length, 1) : PAGE_SIZE;
+  const maxPage = Math.max(0, Math.ceil(items.length / pageSize) - 1);
   page = Math.min(page, maxPage);
-  const shown = items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const lines = shown.map((item, index) => `${page * PAGE_SIZE + index + 1}. [${String(item.course).slice(0, 45)}] ${String(item.name).slice(0, 100)}\nDue: ${formatDate(item.dueAt)}${view === "a" ? `\nGuardian: ${getEffectiveActivityStatus(db, item).replace("_", " ")}` : ""}`);
-  const rows = shown.map((item, index) => [{ text: `${page * PAGE_SIZE + index + 1}. ${item.name}`.slice(0, 55), callback_data: `a1:s:${item.key}` }]);
+  const shown = items.slice(page * pageSize, (page + 1) * pageSize);
+  const lines = shown.map((item, index) => `${page * pageSize + index + 1}. [${String(item.course).slice(0, 45)}] ${String(item.name).slice(0, 100)}\nDue: ${formatDate(item.dueAt)}${view === "a" ? `\nGuardian: ${getEffectiveActivityStatus(db, item).replace("_", " ")}` : ""}`);
+  const rows = shown.map((item, index) => [{ text: `${page * pageSize + index + 1}. ${item.name}`.slice(0, 55), callback_data: `a1:s:${item.key}` }]);
   const navigation = [];
   if (page > 0) navigation.push({ text: "◀ Previous", callback_data: `a1:l:${view}:${page - 1}` });
   if (page < maxPage) navigation.push({ text: "Next ▶", callback_data: `a1:l:${view}:${page + 1}` });
   if (navigation.length) rows.push(navigation);
-  return {
-    text: `${labels[view]}: ${items.length}\nPage ${page + 1}/${maxPage + 1}\n\n${lines.join("\n\n") || "No matching activities found."}`,
+  rows.push([{ text: "🔄 Refresh from Canvas", callback_data: `a1:f:${view}:${page}` }]);
+  const label = `${labels[view]}: ${items.length}`;
+  const counter = `Page ${page + 1}/${maxPage + 1}`;
+  const heading = view === "t" ? label : view === "w" ? `${counter}\n${label}` : `${label}\n${counter}`;
+  const display = {
+    text: `${heading}\n\n${lines.join("\n\n") || "No matching activities found."}`,
     markup: { inline_keyboard: rows },
   };
+  if (view !== "t" || (display.text.length <= 4096 && rows.length <= 100)) return display;
+
+  // Telegram caps message text and inline keyboards. Keep ordinary Today lists
+  // together, but deliver every activity when a single message cannot fit.
+  const groups = [];
+  let group = [];
+  let length = label.length + 32;
+  for (let index = 0; index < lines.length; index++) {
+    if (group.length && (length + lines[index].length + 2 > 3800 || group.length >= 90)) {
+      groups.push(group);
+      group = [];
+      length = label.length + 32;
+    }
+    group.push(index);
+    length += lines[index].length + 2;
+  }
+  if (group.length) groups.push(group);
+  const parts = groups.map((indices, index) => ({
+    text: `${label} (${index + 1}/${groups.length})\n\n${indices.map(i => lines[i]).join("\n\n")}`,
+    markup: { inline_keyboard: [
+      ...indices.map(i => rows[i]),
+      [{ text: "🔄 Refresh from Canvas", callback_data: "a1:f:t:0" }],
+    ] },
+  }));
+  return { ...parts[0], additional: parts.slice(1) };
 }
 
 function activityDetail(db, assignment) {
@@ -197,7 +264,6 @@ function activityDetail(db, assignment) {
   } else if (["completed_offline", "dismissed"].includes(status)) {
     rows.push([{ text: "↩ Restore Pending", callback_data: `a1:r:${assignment.key}` }]);
   }
-  rows.push([{ text: "🔄 View current status", callback_data: `a1:s:${assignment.key}` }]);
   rows.push([{ text: "📚 Pending", callback_data: "a1:l:p:0" }, { text: "🗂 Saved", callback_data: "a1:l:a:0" }]);
   return {
     text: `[${assignment.course}] ${assignment.name}\nDue: ${formatDate(assignment.dueAt)}\nCanvas submission: ${assignment.submitted ? "Submitted" : "Not submitted"}\nGuardian status: ${status?.replace("_", " ") || "Unavailable"}${assignment.htmlUrl ? `\n${assignment.htmlUrl}` : ""}`,
@@ -206,9 +272,17 @@ function activityDetail(db, assignment) {
 }
 
 async function handleCallbackQuery(query, runtime) {
-  const { db, allowedChatId, telegram, getAssignments = getAllActiveCourseAssignments } = runtime;
+  const { db, allowedChatId, telegram, assignmentCache, getAssignments = getAllActiveCourseAssignments,
+    getFreshAssignment = getAssignmentByKey } = runtime;
   if (!query?.id) return;
-  const answer = (text) => telegram.answerCallbackQuery(query.id, text);
+  const answer = async (text) => {
+    try {
+      await telegram.answerCallbackQuery(query.id, text);
+    } catch {
+      // An expired callback must not block activity handling or later updates.
+      (runtime.logger ?? console).warn("Telegram callback acknowledgment failed; continuing.");
+    }
+  };
   if (query.message?.chat?.type !== "private" ||
       String(query.message.chat.id) !== String(allowedChatId) ||
       String(query.from?.id) !== String(allowedChatId)) {
@@ -217,60 +291,82 @@ async function handleCallbackQuery(query, runtime) {
   }
   const data = query.data;
   const list = /^a1:l:([ptwa]):(0|[1-9]\d{0,5})$/.exec(data);
+  const refresh = /^a1:f:([ptwa]):(0|[1-9]\d{0,5})$/.exec(data);
   const item = /^a1:([scdr]):([1-9]\d*:[1-9]\d*)$/.exec(data);
-  if (typeof data !== "string" || Buffer.byteLength(data) > 64 || (!list && !item)) {
+  if (typeof data !== "string" || Buffer.byteLength(data) > 64 || (!list && !refresh && !item)) {
     await answer("This button is no longer valid. Use /pending or /activities.");
     return;
   }
   await answer("Checking activity…");
   const show = async (display) => {
-    if (query.message.text === display.text) return;
+    if (query.message.text === display.text && !display.additional) return;
     try {
       await telegram.editMessageText(query.message.chat.id, query.message.message_id, display.text, display.markup);
     } catch {
       await telegram.sendMessage(query.message.chat.id, display.text, display.markup);
+    }
+    for (const part of display.additional ?? []) {
+      await telegram.sendMessage(query.message.chat.id, part.text, part.markup);
     }
   };
   const navigation = { inline_keyboard: [[
     { text: "📚 Pending", callback_data: "a1:l:p:0" },
     { text: "🗂 Saved", callback_data: "a1:l:a:0" },
   ]] };
+  let assignments;
   try {
-    const assignments = await getAssignments();
-    let display;
-    let notice = "";
-    if (list) {
-      display = activityPage(assignments, db, list[1], Number(list[2]));
-    } else {
-      const assignment = assignments.find((entry) => entry.key === item[2]);
-      if (!assignment) {
-        await show({ text: "Activity no longer found. Open a fresh list.", markup: navigation });
-        return;
-      }
-      const current = getEffectiveActivityStatus(db, assignment);
-      const desired = { c: "completed_offline", d: "dismissed", r: "pending" }[item[1]];
-      if (desired) {
-        if (current === "submitted" || current === null) {
-          notice = "Canvas status changed; no local status was changed.";
-        } else if (current === desired) {
-          notice = "Already in that status.";
-        } else if (desired === "pending" ? current === "pending" : current !== "pending") {
-          notice = "Guardian status changed. Review the current status below.";
-        } else if (desired === "pending") {
-          clearActivityStatusOverride(db, assignment.key);
-          notice = "Restored to Pending.";
-        } else {
-          setActivityStatusOverride(db, assignment.key, desired);
-          notice = desired === "dismissed" ? "Dismissed." : "Marked Completed Offline. Canvas was not changed.";
-        }
-      }
-      display = activityDetail(db, assignment);
-    }
-    if (notice) display.text += `\n\n${notice}`;
-    await show(display);
+    assignments = assignmentCache
+      ? await assignmentCache.get({ force: Boolean(refresh) })
+      : await getAssignments();
   } catch {
     await show({ text: "Could not load activities. Please try again.", markup: navigation }).catch(() => {});
+    return;
   }
+  let display;
+  let notice = "";
+  if (list || refresh) {
+    const target = list || refresh;
+    display = activityPage(assignments, db, target[1], Number(target[2]));
+  } else {
+    let assignment = assignments.find((entry) => entry.key === item[2]);
+    if (!assignment) {
+      await show({ text: "Activity no longer found. Open a fresh list.", markup: navigation });
+      return;
+    }
+    const desired = { c: "completed_offline", d: "dismissed", r: "pending" }[item[1]];
+    if (desired) {
+      try {
+        const verified = await getFreshAssignment(assignment);
+        if (!verified || verified.key !== assignment.key) {
+          throw new Error("Canvas returned a different assignment");
+        }
+        assignmentCache?.update(verified);
+        assignment = verified;
+      } catch {
+        await show({ text: "Could not verify the activity with Canvas. No Guardian status was changed. Please try again.", markup: navigation }).catch(() => {});
+        return;
+      }
+    }
+    const current = getEffectiveActivityStatus(db, assignment);
+    if (desired) {
+      if (current === "submitted" || current === null) {
+        notice = "Canvas status changed; no local status was changed.";
+      } else if (current === desired) {
+        notice = "Already in that status.";
+      } else if (desired === "pending" ? current === "pending" : current !== "pending") {
+        notice = "Guardian status changed. Review the current status below.";
+      } else if (desired === "pending") {
+        clearActivityStatusOverride(db, assignment.key);
+        notice = "Restored to Pending.";
+      } else {
+        setActivityStatusOverride(db, assignment.key, desired);
+        notice = desired === "dismissed" ? "Dismissed." : "Marked Completed Offline. Canvas was not changed.";
+      }
+    }
+    display = activityDetail(db, assignment);
+  }
+  if (notice) display.text += `\n\n${notice}`;
+  await show(display);
 }
 
 function cleanText(html = "") {
@@ -363,7 +459,8 @@ async function sendAnnouncementList(send, chatId, announcements) {
 }
 
 async function handleMessage(message, runtime) {
-  const { db, allowedChatId, send, reportDocument, getAssignments = getAllActiveCourseAssignments } = runtime;
+  const { db, allowedChatId, send, reportDocument, assignmentCache,
+    getAssignments = getAllActiveCourseAssignments } = runtime;
 
   if (!message?.chat) {
     return;
@@ -636,10 +733,13 @@ async function handleMessage(message, runtime) {
     return;
   }
 
-  const assignments = await getAssignments();
+  const assignments = assignmentCache ? await assignmentCache.get() : await getAssignments();
   const view = { "/pending": "p", "/today": "t", "/week": "w", "/activities": "a" }[command];
   const display = activityPage(assignments, db, view, 0);
   await send(message.chat.id, display.text, display.markup);
+  for (const part of display.additional ?? []) {
+    await send(message.chat.id, part.text, part.markup);
+  }
 }
 
 async function initializeOffset(db, call) {
@@ -684,6 +784,7 @@ async function main() {
     send,
     reportDocument,
     telegram,
+    assignmentCache: createAssignmentCache(getAllActiveCourseAssignments),
   };
   const processMessage = async (message) => {
     try {
@@ -726,7 +827,7 @@ async function main() {
   }
 }
 
-module.exports = { COMMANDS, activityPage, createReportHandler, createUpdateProcessor, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
+module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
 
 if (require.main === module) {
   main().catch((error) => {

@@ -97,6 +97,30 @@ test("rejects missing required headers", () => {
   );
 });
 
+test("rejects duplicate headers before choosing student and attendance columns", () => {
+  const duplicated = [...requiredHeaders, "Student ID"].join(",");
+  assert.throws(
+    () => importAttendance(`${duplicated}\n${row()}`, "7001"),
+    /duplicate column names/
+  );
+});
+
+test("bounds CSV bytes, individual records, and total records", () => {
+  assert.throws(
+    () => importAttendance("x".repeat(20 * 1024 * 1024 + 1), "7001"),
+    /20 MiB size limit/
+  );
+  assert.throws(
+    () => importAttendance(`${header}\n${row({ studentName: "x".repeat(70_000) })}`, "7001"),
+    /Invalid attendance CSV/
+  );
+  const manyRows = `${header}\n${`${row({ studentId: "7999" })}\n`.repeat(100_001)}`;
+  assert.throws(
+    () => importAttendance(manyRows, "7001"),
+    /too many records/
+  );
+});
+
 test("returns no records when a valid file has no rows for the current Canvas user", () => {
   assert.deepEqual(
     importAttendance(`${header}\n${row({ studentId: "7999" })}`, "7001"),

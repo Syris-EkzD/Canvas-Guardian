@@ -2,6 +2,7 @@ const fs = require("fs");
 const http = require("http");
 const path = require("path");
 const { google } = require("googleapis");
+const { createOAuthState, matchesOAuthState } = require("./google-oauth-state");
 
 const projectRoot = path.join(__dirname, "..");
 
@@ -40,11 +41,13 @@ const oauth2Client = new google.auth.OAuth2(
   client.client_secret,
   redirectUri
 );
+const oauthState = createOAuthState();
 
 const authorizationUrl = oauth2Client.generateAuthUrl({
   access_type: "offline",
   prompt: "consent",
   scope: [scope],
+  state: oauthState,
 });
 
 const server = http.createServer(async (request, response) => {
@@ -53,6 +56,12 @@ const server = http.createServer(async (request, response) => {
   if (requestUrl.pathname !== "/oauth2callback") {
     response.writeHead(404);
     response.end("Not found");
+    return;
+  }
+
+  if (!matchesOAuthState(oauthState, requestUrl.searchParams.get("state"))) {
+    response.writeHead(400);
+    response.end("Invalid authorization state.");
     return;
   }
 
