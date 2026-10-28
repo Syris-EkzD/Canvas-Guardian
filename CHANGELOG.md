@@ -2,6 +2,27 @@
 
 This project tracks meaningful release milestones rather than dumping commit history.
 
+## [0.4.0] - release candidate
+
+### Features
+
+- Pending, Week, and Saved activity lists show five items per page. Today shows all matching activities together when they fit within Telegram limits; unusually large lists are delivered in ordered parts.
+- Activity lists use a 60-second in-memory Canvas snapshot with a Refresh from Canvas button. Manual status changes verify the selected assignment against fresh Canvas data before changing Guardian's local status.
+- Activity details retain Completed Offline, Dismiss, and Restore Pending controls without the redundant status button.
+
+### Security and reliability
+
+- Attendance CSV parsing now bounds input, record size, record count, and combined offline records, and rejects duplicate headers. `csv-parse` is updated to a patched major version.
+- Google OAuth callbacks verify a per-attempt state token. Calendar synchronization checks event ownership before updating or deleting mapped events.
+- Telegram callback acknowledgment failures no longer block authorized activity operations. SQLite status and offset persistence failures still propagate; background report offsets are kept consistent with polling state.
+- CI audits production dependencies for high and critical advisories. See `docs/security-audit-v0.4.0.md` for the assessment of inherited moderate ExcelJS/UUID findings.
+
+### Existing installations and limitations
+
+- No SQLite schema migration or credential change is required. Node.js 24 remains the supported CI runtime.
+- Interrupted Telegram CSV uploads are best effort; resend the document if no report arrives. A report cannot be recovered after Telegram acknowledges its update.
+- Live Canvas, Google Calendar, and Telegram flows still require an operator check before production deployment.
+
 ## [0.3.1]
 
 Canvas Guardian 0.3.1 is a focused correctness, privacy, and Calendar recovery maintenance release.

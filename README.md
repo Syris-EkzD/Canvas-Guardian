@@ -65,7 +65,9 @@ detailed academic pipeline flow is documented in
 | `/help` | Show all available commands |
 
 Pending, Week, and Saved activity lists show five items per page; Today
-shows all due-today activities without pagination. These lists use a 60-second
+shows all due-today activities without pagination when they fit in one Telegram
+message. Exceptionally large Today lists arrive in numbered parts so no activity
+is omitted. These lists use a 60-second
 in-memory snapshot for faster navigation. **Refresh from Canvas** reloads a list immediately.
 Manual status changes verify the selected assignment's current Canvas submission
 before updating the local Guardian status. The original Canvas submission is
@@ -79,6 +81,7 @@ size limit defaults to 5 MiB and can be set with
 `TELEGRAM_REPORT_MAX_CSV_MIB` (1–20 MiB). Each upload creates an independent
 report; local CSV files are never included. The bot keeps upload and report
 bytes in memory only until delivery completes.
+If an upload is interrupted before delivery, resend the CSV document.
 
 ## How It Works
 
