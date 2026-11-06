@@ -873,7 +873,11 @@ async function main() {
       db, chatId: config.TELEGRAM_ALLOWED_CHAT_ID,
       listActivities: async (view) => {
         const assignments = await runtime.assignmentCache.get();
-        return activityPage(assignments, db, view, 0).text;
+        return activityCandidates(assignments, db, view).slice(0, 60).map(item => ({
+          courseId: item.courseId, assignmentId: item.id, course: item.course,
+          key: item.key, title: item.name, dueAt: item.dueAt,
+          submissionTypes: item.submissionTypes, submitted: item.submitted,
+        }));
       },
       getAnnouncements: () => getRecentAnnouncements(10),
       getStatus: () => ({
