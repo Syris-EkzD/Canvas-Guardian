@@ -710,7 +710,14 @@ async function handleMessage(message, runtime) {
       await send(message.chat.id, "Add your question or assignment details after the command.");
       return;
     }
-    const answer = await runtime.assistant.talk(prompt);
+    let answer;
+    try {
+      answer = await runtime.assistant.talk(prompt);
+    } catch {
+      // SDK/provider failures may contain sensitive request data; never log raw details.
+      await send(message.chat.id, "Gemini could not complete that request. Try again or use the regular Guardian commands.");
+      return;
+    }
     await sendLongText(send, message.chat.id, answer);
     return;
   }
