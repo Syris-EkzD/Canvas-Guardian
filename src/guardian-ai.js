@@ -117,8 +117,8 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
       case "list_activities": {
         const map = { pending: "p", today: "t", week: "w", saved: "a" };
         if (!Object.hasOwn(map, args.view)) throw new Error("Invalid activity list");
-        const text = await listActivities(map[args.view]);
-        return { activities: String(text).slice(0, 7500) };
+        const activities = await listActivities(map[args.view]);
+        return { activities: Array.isArray(activities) ? activities.slice(0, 60) : String(activities).slice(0, 7500) };
       }
       case "get_assignment": {
         const context = await getContext(validateArg(args, "course_id", 30), validateArg(args, "assignment_id", 30));
