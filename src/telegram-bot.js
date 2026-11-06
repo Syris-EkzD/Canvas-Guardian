@@ -885,8 +885,16 @@ async function main() {
         calendarEnabled: getCalendarSyncEnabled(db),
         scheduleConfigured: "ten-minute systemd timers (not live health verified)",
       }),
+      updateMonitoring: async (mode) => {
+        setMonitoringState(db, mode);
+        return { monitoring: getMonitoringState(db), note: "Local Guardian monitoring flag updated." };
+      },
+      updateCalendar: async (enabled) => {
+        setCalendarSyncEnabled(db, enabled);
+        return { calendarEnabled: getCalendarSyncEnabled(db), note: "Local Calendar sync flag updated." };
+      },
       onDraft: async ({ id, context, draft }) => {
-        await send(config.TELEGRAM_ALLOWED_CHAT_ID,
+        await sendLongText(send, config.TELEGRAM_ALLOWED_CHAT_ID,
           "📝 Draft for " + context.title + "\nDraft ID: " + id +
           "\nAssessment: " + draft.explanation +
           "\nGaps: " + (draft.gaps.join("; ") || "None identified; verify manually.") +
