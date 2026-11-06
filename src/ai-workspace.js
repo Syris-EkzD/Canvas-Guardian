@@ -208,7 +208,9 @@ async function confirmSubmission(db, chatId, id, { read = canvasGet, submit = po
 function clearWorkspace(db, chatId) {
   ensureTables(db);
   db.prepare("DELETE FROM ai_drafts WHERE chat_id = ?").run(String(chatId));
-  db.prepare("UPDATE ai_submissions SET status = 'cancelled' WHERE chat_id = ? AND status IN ('staged', 'reviewed')").run(String(chatId));
+  db.prepare("DELETE FROM ai_submissions WHERE chat_id = ? AND status IN ('staged', 'reviewed', 'cancelled', 'submitted')").run(String(chatId));
+  // Retain only outcome markers for ambiguous or in-flight writes.
+  db.prepare("UPDATE ai_submissions SET payload = '' WHERE chat_id = ? AND status IN ('uncertain', 'checking', 'submitting')").run(String(chatId));
 }
 
 module.exports = {
