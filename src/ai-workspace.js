@@ -57,8 +57,7 @@ function validateUrl(value) {
 }
 
 function validateAssignment(raw, courseId, assignmentId, submissionType) {
-  if (!raw || String(raw.id) !== courseId && String(raw.id) !== assignmentId) {
-    // The course identity is validated separately because Canvas may omit course_id.
+  if (!raw || typeof raw !== "object") {
     throw new Error("Canvas returned an invalid assignment");
   }
   if (String(raw.id) !== assignmentId ||
