@@ -4,7 +4,7 @@ This feature is **not enabled unless GEMINI_API_KEY is configured**. It adds cha
 
 ## Capabilities and boundaries
 
-- Send a normal message or use /ai followed by a request. Gemini may list pending/today/week/saved activities, read an assignment and rubric, show announcements or report local monitoring/calendar settings.
+- Send a normal message or use /ai followed by a request. Gemini may list pending/today/week/saved activities, read an assignment and rubric, show announcements, report local monitoring/calendar settings, or change those local settings when you explicitly ask.
 - /draft <course ID> <assignment ID> explicitly requests a draft for one Canvas assignment. You can also ask in natural language after discovering the IDs. Revisions reference the saved draft version.
 - Drafts are generated using src/gemini-draft-engine.js and shown as full Telegram text. A new revision has a new draft identifier.
 - Ask Gemini to *prepare* that saved text draft for submission, or to prepare an HTTP(S) URL. The preview is stored locally. **Gemini has no submit function** and cannot approve a submission.
