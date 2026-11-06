@@ -108,3 +108,20 @@ test("chat history and drafts are isolated by chat ID", () => {
   assert.equal(workspace.getDraft(db, 42, id), null);
   db.close();
 });
+
+test("explicit monitoring and calendar tools validate arguments before changing local state", async () => {
+  const db = new Database(":memory:");
+  const changes = [];
+  const ai = createAssistant({
+    db, chatId: 42, client: { models: { generateContent: async () => ({}) } },
+    listActivities: async () => [], getAnnouncements: async () => [], getStatus: () => ({}),
+    updateMonitoring: async mode => { changes.push(["monitor", mode]); return { mode }; },
+    updateCalendar: async enabled => { changes.push(["calendar", enabled]); return { enabled }; },
+  });
+  assert.deepEqual(await ai.execute("set_monitoring_mode", { mode: "paused" }), { mode: "paused" });
+  assert.deepEqual(await ai.execute("set_calendar_mode", { mode: "off" }), { enabled: false });
+  await assert.rejects(ai.execute("set_monitoring_mode", { mode: "explode" }), /Invalid/);
+  await assert.rejects(ai.execute("set_calendar_mode", { mode: "sometimes" }), /Invalid/);
+  assert.deepEqual(changes, [["monitor", "paused"], ["calendar", false]]);
+  db.close();
+});
