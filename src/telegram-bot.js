@@ -16,6 +16,8 @@ const {
 const { requireEnvironment } = require("./runtime-config");
 const { createTelegramClient } = require("./telegram-client");
 const { createReportFromCsv } = require("./academic-pipeline");
+const { createAssistant, forgetConversation } = require("./guardian-ai");
+const aiWorkspace = require("./ai-workspace");
 const {
   clearActivityStatusOverride,
   getEffectiveActivityStatus,
@@ -40,6 +42,9 @@ const COMMANDS = Object.freeze([
   { command: "calendar", description: "Toggle calendar synchronization" },
   { command: "calendar_status", description: "Show calendar synchronization status" },
   { command: "report", description: "Create an Excel report from a Roll Call CSV" },
+  { command: "ai", description: "Ask Gemini for help with your Canvas work" },
+  { command: "draft", description: "Draft a specified assignment with Gemini" },
+  { command: "forget", description: "Clear Gemini chat history and pending previews" },
   { command: "help", description: "Show available commands" },
 ]);
 
@@ -271,6 +276,49 @@ function activityDetail(db, assignment) {
   };
 }
 
+async function sendLongText(send, chatId, text, finalMarkup) {
+  const content = String(text || "");
+  const chunks = [];
+  for (let i = 0; i < content.length; i += 3500) chunks.push(content.slice(i, i + 3500));
+  if (!chunks.length) chunks.push("(empty)");
+  for (let i = 0; i < chunks.length; i++) {
+    await send(chatId, chunks[i], i === chunks.length - 1 ? finalMarkup : undefined);
+  }
+}
+
+async function handleAiSubmissionCallback(query, runtime) {
+  const match = /^ai:([rcx]):([a-f0-9-]{36})$/.exec(query.data);
+  if (!match) return;
+  const [, action, id] = match;
+  const chatId = query.message.chat.id;
+  const send = runtime.telegram.sendMessage;
+  try {
+    if (action === "x") {
+      const cancelled = aiWorkspace.cancelSubmission(runtime.db, chatId, id);
+      await send(chatId, cancelled ? "Submission preview cancelled. Nothing was sent to Canvas." :
+        "Preview was already used or is unavailable.");
+    } else if (action === "r") {
+      const detail = aiWorkspace.reviewSubmission(runtime.db, chatId, id);
+      await send(chatId, "FULL SUBMISSION REVIEW\nAssignment: " + detail.title +
+        "\nType: " + detail.submissionType +
+        "\nRecommendation: " + detail.recommendation +
+        "\n\nRead the complete content below. Confirm only if you want EXACTLY this version sent to Canvas.");
+      await sendLongText(send, chatId, detail.payload, { inline_keyboard: [
+        [{ text: "✅ Confirm Canvas submission", callback_data: "ai:c:" + id }],
+        [{ text: "❌ Cancel", callback_data: "ai:x:" + id }],
+      ] });
+    } else if (action === "c") {
+      const result = await aiWorkspace.confirmSubmission(runtime.db, chatId, id);
+      await send(chatId, "✅ Canvas confirmed the submission.\nType: " +
+        result.submissionType + "\nSubmitted at: " + result.submittedAt);
+    }
+  } catch (error) {
+    const msg = error.message && /^(Submission|Canvas assignment)/.test(error.message)
+      ? error.message : "Could not process approval. No automatic retry will occur; check Canvas before trying again.";
+    await send(chatId, msg);
+  }
+}
+
 async function handleCallbackQuery(query, runtime) {
   const { db, allowedChatId, telegram, assignmentCache, getAssignments = getAllActiveCourseAssignments,
     getFreshAssignment = getAssignmentByKey } = runtime;
@@ -290,6 +338,11 @@ async function handleCallbackQuery(query, runtime) {
     return;
   }
   const data = query.data;
+  if (typeof data === "string" && data.startsWith("ai:")) {
+    await answer("Checking approval…");
+    await handleAiSubmissionCallback(query, runtime);
+    return;
+  }
   const list = /^a1:l:([ptwa]):(0|[1-9]\d{0,5})$/.exec(data);
   const refresh = /^a1:f:([ptwa]):(0|[1-9]\d{0,5})$/.exec(data);
   const item = /^a1:([scdr]):([1-9]\d*:[1-9]\d*)$/.exec(data);
@@ -633,6 +686,35 @@ async function handleMessage(message, runtime) {
     return;
   }
 
+  if (command === "/forget") {
+    forgetConversation(db, message.chat.id);
+    await send(message.chat.id, "Gemini history and pending submission previews cleared. Previously sent messages remain in Telegram.");
+    return;
+  }
+
+  if (command === "/ai" && messageParts.length === 1) {
+    await send(message.chat.id, "Ask a question naturally, or use /ai followed by your request. I can inspect assignments, draft and revise work, or prepare a submission for your explicit review. Only a separate Confirm button can submit to Canvas.");
+    return;
+  }
+
+  if (!command.startsWith("/") || ["/ai", "/draft"].includes(command)) {
+    if (!runtime.assistant) {
+      await send(message.chat.id, "Gemini is not configured on this Guardian instance. Set GEMINI_API_KEY.");
+      return;
+    }
+    let prompt = message.text.trim();
+    if (command === "/ai") prompt = message.text.trim().slice(messageParts[0].length).trim();
+    if (command === "/draft") prompt = "The user explicitly requests an assignment draft: " +
+      message.text.trim().slice(messageParts[0].length).trim();
+    if (!prompt) {
+      await send(message.chat.id, "Add your question or assignment details after the command.");
+      return;
+    }
+    const answer = await runtime.assistant.talk(prompt);
+    await sendLongText(send, message.chat.id, answer);
+    return;
+  }
+
   if (command === "/report") {
     await send(message.chat.id, "Upload one official Roll Call CSV document in this private chat. I’ll return an Excel report with Summary, Assignments, and Attendance sheets. The default CSV limit is 5 MiB (configurable by the operator).");
     return;
@@ -786,6 +868,44 @@ async function main() {
     telegram,
     assignmentCache: createAssignmentCache(getAllActiveCourseAssignments),
   };
+  if (process.env.GEMINI_API_KEY) {
+    runtime.assistant = createAssistant({
+      db, chatId: config.TELEGRAM_ALLOWED_CHAT_ID,
+      listActivities: async (view) => {
+        const assignments = await runtime.assignmentCache.get();
+        return activityPage(assignments, db, view, 0).text;
+      },
+      getAnnouncements: () => getRecentAnnouncements(10),
+      getStatus: () => ({
+        monitoring: getMonitoringState(db),
+        calendarEnabled: getCalendarSyncEnabled(db),
+        scheduleConfigured: "ten-minute systemd timers (not live health verified)",
+      }),
+      onDraft: async ({ id, context, draft }) => {
+        await send(config.TELEGRAM_ALLOWED_CHAT_ID,
+          "📝 Draft for " + context.title + "\nDraft ID: " + id +
+          "\nAssessment: " + draft.explanation +
+          "\nGaps: " + (draft.gaps.join("; ") || "None identified; verify manually.") +
+          "\n\nDraft text follows:");
+        await sendLongText(send, config.TELEGRAM_ALLOWED_CHAT_ID, draft.draft);
+      },
+      onPreview: async (preview) => {
+        await send(config.TELEGRAM_ALLOWED_CHAT_ID,
+          "📤 PREPARED — NOT SUBMITTED\n" +
+          "Assignment: " + preview.title + "\n" +
+          "Submission type: " + preview.submissionType + "\n" +
+          "Content: " + preview.contentLength + " characters\n" +
+          "Preview: " + preview.preview + "\n\n" +
+          "Recommendation: " + preview.recommendation +
+          "\n\nReview the full version before confirming (expires in 15 minutes).",
+          { inline_keyboard: [
+            [{ text: "🔍 Review full submission", callback_data: "ai:r:" + preview.id }],
+            [{ text: "❌ Cancel", callback_data: "ai:x:" + preview.id }],
+          ] });
+      },
+    });
+  }
+
   const processMessage = async (message) => {
     try {
       await handleMessage(message, runtime);
@@ -827,7 +947,7 @@ async function main() {
   }
 }
 
-module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
+module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, handleAiSubmissionCallback, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
 
 if (require.main === module) {
   main().catch((error) => {
