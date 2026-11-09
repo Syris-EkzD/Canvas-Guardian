@@ -173,16 +173,18 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
         message: String(item.message || "").replace(/<[^>]*>/g, " ").slice(0, 700),
       })) };
       case "get_guardian_status": return getStatus();
-      case "set_monitoring_mode":
+      case "set_monitoring_mode": {
         if (!["running", "paused", "stopped"].includes(args.mode)) throw new Error("Invalid monitoring mode");
         const proposal = workspace.stageSettingChange(db, chatId, "monitoring", args.mode);
         await onSettingProposal(proposal);
         return { status: "AWAITING_TELEGRAM_CONFIRMATION", setting: "monitoring", mode: args.mode };
-      case "set_calendar_mode":
+      }
+      case "set_calendar_mode": {
         if (!["on", "off"].includes(args.mode)) throw new Error("Invalid calendar mode");
         const proposal = workspace.stageSettingChange(db, chatId, "calendar", args.mode);
         await onSettingProposal(proposal);
         return { status: "AWAITING_TELEGRAM_CONFIRMATION", setting: "calendar", mode: args.mode };
+      }
       case "draft_assignment": {
         const context = await getContext(validateArg(args, "course_id", 30), validateArg(args, "assignment_id", 30));
         const draft = await generate(context, { instructions: (args.instructions || "").slice(0, 3000), provider: aiProvider, model });
