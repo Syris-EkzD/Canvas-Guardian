@@ -42,9 +42,9 @@ const COMMANDS = Object.freeze([
   { command: "calendar", description: "Toggle calendar synchronization" },
   { command: "calendar_status", description: "Show calendar synchronization status" },
   { command: "report", description: "Create an Excel report from a Roll Call CSV" },
-  { command: "ai", description: "Ask Gemini for help with your Canvas work" },
-  { command: "draft", description: "Draft a specified assignment with Gemini" },
-  { command: "forget", description: "Clear Gemini chat history and pending previews" },
+  { command: "ai", description: "Ask AI for help with your Canvas work" },
+  { command: "draft", description: "Draft a specified assignment with AI" },
+  { command: "forget", description: "Clear AI history and pending approvals" },
   { command: "help", description: "Show available commands" },
 ]);
 
@@ -319,6 +319,29 @@ async function handleAiSubmissionCallback(query, runtime) {
   }
 }
 
+async function handleAiSettingCallback(query, runtime) {
+  const match = /^gs:([cx]):([a-f0-9-]{36})$/.exec(query.data);
+  if (!match) return;
+  const [, action, id] = match;
+  const chatId = query.message.chat.id;
+  const send = runtime.telegram.sendMessage;
+  try {
+    if (action === "x") {
+      const cancelled = aiWorkspace.cancelSettingChange(runtime.db, chatId, id);
+      await send(chatId, cancelled ? "Setting change cancelled. Nothing was changed." :
+        "Setting confirmation has expired or was already consumed.");
+    } else {
+      const applied = await aiWorkspace.confirmSettingChange(runtime.db, chatId, id, {
+        updateMonitoring: runtime.updateMonitoring || (mode => setMonitoringState(runtime.db, mode)),
+        updateCalendar: runtime.updateCalendar || (enabled => setCalendarSyncEnabled(runtime.db, enabled)),
+      });
+      await send(chatId, "✅ Guardian " + applied.setting + " setting changed to " + applied.value + ".");
+    }
+  } catch {
+    await send(chatId, "Setting confirmation expired, unavailable or already used. Check /status before requesting a new change.");
+  }
+}
+
 async function handleCallbackQuery(query, runtime) {
   const { db, allowedChatId, telegram, assignmentCache, getAssignments = getAllActiveCourseAssignments,
     getFreshAssignment = getAssignmentByKey } = runtime;
@@ -341,6 +364,11 @@ async function handleCallbackQuery(query, runtime) {
   if (typeof data === "string" && data.startsWith("ai:")) {
     await answer("Checking approval…");
     await handleAiSubmissionCallback(query, runtime);
+    return;
+  }
+  if (typeof data === "string" && data.startsWith("gs:")) {
+    await answer("Checking setting confirmation…");
+    await handleAiSettingCallback(query, runtime);
     return;
   }
   const list = /^a1:l:([ptwa]):(0|[1-9]\d{0,5})$/.exec(data);
@@ -688,7 +716,7 @@ async function handleMessage(message, runtime) {
 
   if (command === "/forget") {
     forgetConversation(db, message.chat.id);
-    await send(message.chat.id, "Gemini history and pending submission previews cleared. Previously sent messages remain in Telegram.");
+    await send(message.chat.id, "AI history and pending approvals cleared. Previously sent messages remain in Telegram.");
     return;
   }
 
@@ -699,7 +727,7 @@ async function handleMessage(message, runtime) {
 
   if (!command.startsWith("/") || ["/ai", "/draft"].includes(command)) {
     if (!runtime.assistant) {
-      await send(message.chat.id, "Gemini is not configured on this Guardian instance. Set GEMINI_API_KEY.");
+      await send(message.chat.id, "AI is not configured on this Guardian instance. Configure AI_PROVIDER and its API key.");
       return;
     }
     let prompt = message.text.trim();
@@ -715,7 +743,7 @@ async function handleMessage(message, runtime) {
       answer = await runtime.assistant.talk(prompt);
     } catch {
       // SDK/provider failures may contain sensitive request data; never log raw details.
-      await send(message.chat.id, "Gemini could not complete that request. Try again or use the regular Guardian commands.");
+      await send(message.chat.id, "AI could not complete that request. Try again or use the regular Guardian commands.");
       return;
     }
     await sendLongText(send, message.chat.id, answer);
@@ -875,7 +903,7 @@ async function main() {
     telegram,
     assignmentCache: createAssignmentCache(getAllActiveCourseAssignments),
   };
-  if (process.env.GEMINI_API_KEY) {
+  if (process.env.GEMINI_API_KEY || process.env.AI_PROVIDER) {
     runtime.assistant = createAssistant({
       db, chatId: config.TELEGRAM_ALLOWED_CHAT_ID,
       listActivities: async (view) => {
@@ -892,13 +920,15 @@ async function main() {
         calendarEnabled: getCalendarSyncEnabled(db),
         scheduleConfigured: "ten-minute systemd timers (not live health verified)",
       }),
-      updateMonitoring: async (mode) => {
-        setMonitoringState(db, mode);
-        return { monitoring: getMonitoringState(db), note: "Local Guardian monitoring flag updated." };
-      },
-      updateCalendar: async (enabled) => {
-        setCalendarSyncEnabled(db, enabled);
-        return { calendarEnabled: getCalendarSyncEnabled(db), note: "Local Calendar sync flag updated." };
+      onSettingProposal: async (proposal) => {
+        await send(config.TELEGRAM_ALLOWED_CHAT_ID,
+          "⚙️ SETTING CHANGE — NOT APPLIED\\n" +
+          "Setting: " + proposal.setting + "\\nRequested value: " + proposal.value +
+          "\\n\\nConfirm this change yourself within 15 minutes.",
+          { inline_keyboard: [
+            [{ text: "✅ Confirm setting change", callback_data: "gs:c:" + proposal.id }],
+            [{ text: "❌ Cancel", callback_data: "gs:x:" + proposal.id }],
+          ] });
       },
       onDraft: async ({ id, context, draft }) => {
         await sendLongText(send, config.TELEGRAM_ALLOWED_CHAT_ID,
@@ -966,7 +996,7 @@ async function main() {
   }
 }
 
-module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, handleAiSubmissionCallback, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
+module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, handleAiSubmissionCallback, handleAiSettingCallback, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
 
 if (require.main === module) {
   main().catch((error) => {

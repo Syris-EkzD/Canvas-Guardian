@@ -14,7 +14,11 @@ function ensureTables(db) {
       "id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, course_id TEXT NOT NULL, " +
       "assignment_id TEXT NOT NULL, assignment_title TEXT NOT NULL, " +
       "submission_type TEXT NOT NULL, payload TEXT NOT NULL, advice TEXT NOT NULL, " +
-      "status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);"
+      "status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);" +
+    "CREATE TABLE IF NOT EXISTS ai_setting_confirmations (" +
+      "id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, setting TEXT NOT NULL, " +
+      "value TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, " +
+      "expires_at INTEGER NOT NULL);"
   );
 }
 
@@ -205,8 +209,75 @@ async function confirmSubmission(db, chatId, id, { read = canvasGet, submit = po
   }
 }
 
+
+// Settings are proposals, never instructions to the model to perform a write.
+// Only a verified Telegram callback can consume a proposed change.
+const SETTING_VALUES = Object.freeze({
+  monitoring: ["running", "paused", "stopped"],
+  calendar: ["on", "off"],
+});
+
+function stageSettingChange(db, chatId, setting, value, { now = Date.now() } = {}) {
+  if (!Object.hasOwn(SETTING_VALUES, setting) || !SETTING_VALUES[setting].includes(value)) {
+    throw new Error("Invalid Guardian setting change");
+  }
+  ensureTables(db);
+  const id = randomUUID();
+  const transaction = db.transaction(() => {
+    db.prepare("UPDATE ai_setting_confirmations SET status = 'cancelled' WHERE chat_id = ? AND status = 'pending'")
+      .run(String(chatId));
+    db.prepare("INSERT INTO ai_setting_confirmations VALUES (?, ?, ?, ?, 'pending', ?, ?)")
+      .run(id, String(chatId), setting, value, now, now + LIFETIME_MS);
+  });
+  transaction();
+  return { id, setting, value, expiresAt: now + LIFETIME_MS };
+}
+
+function getSettingChange(db, chatId, id) {
+  ensureTables(db);
+  return db.prepare("SELECT * FROM ai_setting_confirmations WHERE id = ? AND chat_id = ?")
+    .get(id, String(chatId)) || null;
+}
+
+function cancelSettingChange(db, chatId, id, { now = Date.now() } = {}) {
+  ensureTables(db);
+  return db.prepare("UPDATE ai_setting_confirmations SET status = 'cancelled' " +
+    "WHERE id = ? AND chat_id = ? AND status = 'pending' AND expires_at > ?")
+    .run(id, String(chatId), now).changes === 1;
+}
+
+async function confirmSettingChange(db, chatId, id, {
+  updateMonitoring, updateCalendar, now = Date.now(),
+} = {}) {
+  const item = getSettingChange(db, chatId, id);
+  if (!item || item.status !== "pending" || item.expires_at <= now) {
+    throw new Error("Setting confirmation expired, unauthorized or already used");
+  }
+  const claimed = db.prepare("UPDATE ai_setting_confirmations SET status = 'applying' " +
+    "WHERE id = ? AND chat_id = ? AND status = 'pending' AND expires_at > ?")
+    .run(id, String(chatId), now).changes;
+  if (!claimed) throw new Error("Setting confirmation already consumed");
+  try {
+    if (item.setting === "monitoring" && SETTING_VALUES.monitoring.includes(item.value) &&
+        typeof updateMonitoring === "function") {
+      await updateMonitoring(item.value);
+    } else if (item.setting === "calendar" && SETTING_VALUES.calendar.includes(item.value) &&
+        typeof updateCalendar === "function") {
+      await updateCalendar(item.value === "on");
+    } else {
+      throw new Error("Setting handler unavailable");
+    }
+    db.prepare("UPDATE ai_setting_confirmations SET status = 'applied' WHERE id = ? AND status = 'applying'").run(id);
+    return { setting: item.setting, value: item.value };
+  } catch {
+    db.prepare("UPDATE ai_setting_confirmations SET status = 'failed' WHERE id = ? AND status = 'applying'").run(id);
+    throw new Error("Setting change could not be completed; check /status before trying again");
+  }
+}
+
 function clearWorkspace(db, chatId) {
   ensureTables(db);
+  db.prepare("UPDATE ai_setting_confirmations SET status = 'cancelled' WHERE chat_id = ? AND status = 'pending'").run(String(chatId));
   db.prepare("DELETE FROM ai_drafts WHERE chat_id = ?").run(String(chatId));
   db.prepare("DELETE FROM ai_submissions WHERE chat_id = ? AND status IN ('staged', 'reviewed', 'cancelled', 'submitted')").run(String(chatId));
   // Retain only outcome markers for ambiguous or in-flight writes.
@@ -217,4 +288,5 @@ module.exports = {
   saveDraft, getDraft, stageSubmission, getRequest, requestSummary, reviewSubmission,
   cancelSubmission, confirmSubmission, clearWorkspace, validateUrl, validateAssignment,
   postCanvasSubmission,
+  stageSettingChange, getSettingChange, cancelSettingChange, confirmSettingChange,
 };
