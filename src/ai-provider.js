@@ -3,7 +3,7 @@ const { createGeminiProvider } = require("./gemini-provider");
 const DEFAULT_MODEL = "gemini-3.8-flash";
 
 function selectedModel(model) {
-  return model ?? process.env.AI_MODEL ?? process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
+  return model || process.env.AI_MODEL || process.env.GEMINI_MODEL || DEFAULT_MODEL;
 }
 
 function resolveProvider({ provider, client, apiKey } = {}) {

@@ -71,9 +71,9 @@ test("Gemini has no direct Canvas submit tool; prepared draft is reviewed separa
     onDraft: async item => events.push({ draft: item.draft.draft }),
     onPreview: async item => events.push({ preview: item }),
   });
-  const draft = await aware.execute("draft_assignment", { course_id: "12", assignment_id: "34" });
+  const draft = await aware.execute("draft_assignment", { course_id: "12", assignment_id: "34" }, "Please draft assignment 12 34");
   assert.equal(draft.sentFullDraftToUser, true);
-  const pending = await aware.execute("prepare_text_submission", { draft_id: draft.draftId });
+  const pending = await aware.execute("prepare_text_submission", { draft_id: draft.draftId }, "Prepare that draft for submission review");
   assert.equal(pending.status, "AWAITING_USER_REVIEW");
   assert.equal(events[1].input.payload, "My original reflection");
   assert.match(events[1].input.advice, /Revise before submitting/);
@@ -87,7 +87,7 @@ test("invalid or hallucinated function calls do not execute arbitrary operations
   const { db, ai } = fixture();
   await assert.rejects(ai.execute("run_shell", { command: "rm -rf /" }), /unavailable/);
   await assert.rejects(ai.execute("list_activities", { view: "__proto__" }), /Invalid/);
-  await assert.rejects(ai.execute("draft_assignment", { course_id: "/etc/passwd", assignment_id: "34" }), /positive Canvas ID|Invalid/);
+  await assert.rejects(ai.execute("draft_assignment", { course_id: "/etc/passwd", assignment_id: "34" }, "draft assignment"), /positive Canvas ID|Invalid/);
   db.close();
 });
 
@@ -109,19 +109,63 @@ test("chat history and drafts are isolated by chat ID", () => {
   db.close();
 });
 
-test("explicit monitoring and calendar tools validate arguments before changing local state", async () => {
+test("AI setting tools stage proposals but cannot apply changes themselves", async () => {
   const db = new Database(":memory:");
   const changes = [];
+  const proposals = [];
   const ai = createAssistant({
-    db, chatId: 42, client: { models: { generateContent: async () => ({}) } },
+    db, chatId: 42,
     listActivities: async () => [], getAnnouncements: async () => [], getStatus: () => ({}),
-    updateMonitoring: async mode => { changes.push(["monitor", mode]); return { mode }; },
-    updateCalendar: async enabled => { changes.push(["calendar", enabled]); return { enabled }; },
+    onSettingProposal: async proposal => proposals.push(proposal),
   });
-  assert.deepEqual(await ai.execute("set_monitoring_mode", { mode: "paused" }), { mode: "paused" });
-  assert.deepEqual(await ai.execute("set_calendar_mode", { mode: "off" }), { enabled: false });
-  await assert.rejects(ai.execute("set_monitoring_mode", { mode: "explode" }), /Invalid/);
-  await assert.rejects(ai.execute("set_calendar_mode", { mode: "sometimes" }), /Invalid/);
-  assert.deepEqual(changes, [["monitor", "paused"], ["calendar", false]]);
+  await assert.rejects(ai.execute("set_monitoring_mode", { mode: "paused" }), /Explicit/);
+  await assert.rejects(ai.execute("set_monitoring_mode", { mode: "paused" }, "don't pause monitoring"), /Explicit/);
+  await assert.rejects(ai.execute("set_monitoring_mode", { mode: "explode" }, "pause monitoring"), /Invalid/);
+  await assert.rejects(ai.execute("set_calendar_mode", { mode: "sometimes" }, "disable calendar"), /Invalid/);
+  assert.equal(proposals.length, 0);
+
+  const pending = await ai.execute("set_monitoring_mode", { mode: "paused" }, "please pause monitoring");
+  assert.equal(pending.status, "AWAITING_TELEGRAM_CONFIRMATION");
+  assert.equal(proposals.length, 1);
+  assert.equal(workspace.getSettingChange(db, 42, proposals[0].id).status, "pending");
+  assert.deepEqual(changes, []);
+  await workspace.confirmSettingChange(db, 42, proposals[0].id, {
+    updateMonitoring: async mode => changes.push(["monitor", mode]),
+  });
+  assert.deepEqual(changes, [["monitor", "paused"]]);
+  await assert.rejects(workspace.confirmSettingChange(db, 42, proposals[0].id, {
+    updateMonitoring: async mode => changes.push(["monitor", mode]),
+  }), /already used/);
+  db.close();
+});
+
+test("provider tool output cannot draft, stage, or alter settings without explicit user request", async () => {
+  const db = new Database(":memory:");
+  const proposed = [];
+  const outputs = [];
+  let turns = 0;
+  const provider = {
+    chat: async ({ messages }) => {
+      if (turns++ === 0) return { toolCalls: [
+        { name: "set_monitoring_mode", args: { mode: "stopped" } },
+        { name: "draft_assignment", args: { course_id: "12", assignment_id: "34" } },
+        { name: "prepare_url_submission", args: { course_id: "12", assignment_id: "34", url: "https://example.org" } },
+      ] };
+      outputs.push(messages.at(-1));
+      return { text: "No changes made." };
+    },
+    draft: async () => { throw new Error("draft should not run"); },
+  };
+  const ai = createAssistant({
+    db, chatId: 42, provider,
+    getContext: async () => { throw new Error("Canvas should not be fetched"); },
+    listActivities: async () => [], getAnnouncements: async () => [], getStatus: () => ({}),
+    onSettingProposal: async proposal => proposed.push(proposal),
+  });
+  assert.equal(await ai.talk("What's pending?"), "No changes made.");
+  assert.deepEqual(proposed, []);
+  assert.equal(outputs.length, 1);
+  assert.equal(outputs[0].toolResults.length, 3);
+  assert.ok(outputs[0].toolResults.every(result => /Explicit/.test(result.result.error)));
   db.close();
 });

@@ -81,29 +81,30 @@ const declarations = [
 ];
 
 const INTENT = {
-  draft_assignment: /\\b(draft|write|compose|generate|create)\\b/i,
-  revise_draft: /\\b(revise|rewrite|edit|improve|fix|adjust|update|shorten|lengthen|expand|rephrase)\\b/i,
-  prepare_text_submission: /\\b(prepare|stage|preview|submit|submission)\\b/i,
-  prepare_url_submission: /\\b(prepare|stage|preview|submit|submission)\\b/i,
+  draft_assignment: /\b(draft|write|compose|generate|create)\b/i,
+  revise_draft: /\b(revise|rewrite|edit|improve|fix|adjust|update|shorten|lengthen|expand|rephrase)\b/i,
+  prepare_text_submission: /\b(prepare|stage|preview|submit|submission)\b/i,
+  prepare_url_submission: /\b(prepare|stage|preview|submit|submission)\b/i,
 };
 
 function assertExplicitRequest(name, message, args) {
-  if (INTENT[name] && !INTENT[name].test(message)) {
+  const negative = /\b(?:do not|don't|never|without|should not|not to|no need to)\s+(?:draft|write|compose|generate|create|revise|rewrite|edit|improve|fix|adjust|update|prepare|stage|preview|submit)\b/i;
+  if (INTENT[name] && (negative.test(message) || !INTENT[name].test(message))) {
     throw new Error("Explicit user request required for " + name);
   }
   if (name !== "set_monitoring_mode" && name !== "set_calendar_mode") return;
   const isCalendar = name === "set_calendar_mode";
-  const setting = isCalendar ? /\\b(calendar|sync|synchronization)\\b/i : /\\b(monitoring|monitor|notifications|alerts|horus)\\b/i;
+  const setting = isCalendar ? /\b(calendar|sync|synchronization)\b/i : /\b(monitoring|monitor|notifications|alerts|horus)\b/i;
   const commands = isCalendar ? {
-    on: /\\b(enable|start|turn on|switch on|activate|on)\\b/i,
-    off: /\\b(disable|stop|turn off|switch off|deactivate|off)\\b/i,
+    on: /\b(enable|start|turn on|switch on|activate|on)\b/i,
+    off: /\b(disable|stop|turn off|switch off|deactivate|off)\b/i,
   } : {
-    running: /\\b(start|resume|unpause|enable|run|running)\\b/i,
-    paused: /\\b(pause|paused|suspend|suspended)\\b/i,
-    stopped: /\\b(stop|stopped|disable|turn off)\\b/i,
+    running: /\b(start|resume|unpause|enable|run|running)\b/i,
+    paused: /\b(pause|paused|suspend|suspended)\b/i,
+    stopped: /\b(stop|stopped|disable|turn off)\b/i,
   };
   if (!setting.test(message) || !commands[args.mode]?.test(message) ||
-      /\\b(?:do not|don't|never|without|should not|not to)\\s+(?:start|resume|pause|stop|enable|disable|change|set)\\b/i.test(message)) {
+      /\b(?:do not|don't|never|without|should not|not to)\s+(?:start|resume|pause|stop|enable|disable|change|set)\b/i.test(message)) {
     throw new Error("Explicit matching user request required for settings");
   }
 }

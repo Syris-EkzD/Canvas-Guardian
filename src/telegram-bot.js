@@ -903,7 +903,7 @@ async function main() {
     telegram,
     assignmentCache: createAssignmentCache(getAllActiveCourseAssignments),
   };
-  if (process.env.GEMINI_API_KEY || process.env.AI_PROVIDER) {
+  if (process.env.GEMINI_API_KEY || (process.env.AI_PROVIDER && process.env.AI_PROVIDER !== "gemini")) {
     runtime.assistant = createAssistant({
       db, chatId: config.TELEGRAM_ALLOWED_CHAT_ID,
       listActivities: async (view) => {
@@ -922,9 +922,9 @@ async function main() {
       }),
       onSettingProposal: async (proposal) => {
         await send(config.TELEGRAM_ALLOWED_CHAT_ID,
-          "⚙️ SETTING CHANGE — NOT APPLIED\\n" +
-          "Setting: " + proposal.setting + "\\nRequested value: " + proposal.value +
-          "\\n\\nConfirm this change yourself within 15 minutes.",
+          "⚙️ SETTING CHANGE — NOT APPLIED\n" +
+          "Setting: " + proposal.setting + "\nRequested value: " + proposal.value +
+          "\n\nConfirm this change yourself within 15 minutes.",
           { inline_keyboard: [
             [{ text: "✅ Confirm setting change", callback_data: "gs:c:" + proposal.id }],
             [{ text: "❌ Cancel", callback_data: "gs:x:" + proposal.id }],

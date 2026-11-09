@@ -3,7 +3,8 @@ const assert = require("node:assert/strict");
 const Database = require("better-sqlite3");
 const {
   saveDraft, getDraft, stageSubmission, getRequest, reviewSubmission, cancelSubmission,
-  confirmSubmission, postCanvasSubmission,
+  confirmSubmission, postCanvasSubmission, stageSettingChange, getSettingChange,
+  cancelSettingChange, confirmSettingChange, clearWorkspace,
 } = require("../src/ai-workspace");
 
 function fixture() {
@@ -153,5 +154,37 @@ test("unsafe URLs are rejected before any Canvas read", async () => {
       courseId: 12, assignmentId: 34, submissionType: "online_url", payload: url,
     }, { read }), /submission URL/i);
   }
+  db.close();
+});
+
+test("setting confirmations are chat-bound, expire, and cannot be replayed", async () => {
+  const db = new Database(":memory:");
+  const changes = [];
+  const opts = { updateMonitoring: async value => changes.push(["monitoring", value]),
+    updateCalendar: async value => changes.push(["calendar", value]) };
+  const created = stageSettingChange(db, 42, "monitoring", "paused", { now: 1000000 });
+  assert.equal(getSettingChange(db, 42, created.id).status, "pending");
+  await assert.rejects(confirmSettingChange(db, 99, created.id, { ...opts, now: 1000001 }), /unauthorized/);
+  await assert.rejects(confirmSettingChange(db, 42, created.id, { ...opts, now: created.expiresAt }), /expired/);
+  assert.deepEqual(changes, []);
+  await confirmSettingChange(db, 42, created.id, { ...opts, now: 1000001 });
+  await assert.rejects(confirmSettingChange(db, 42, created.id, { ...opts, now: 1000002 }), /already used/);
+  assert.deepEqual(changes, [["monitoring", "paused"]]);
+
+  const older = stageSettingChange(db, 42, "calendar", "off", { now: 2000000 });
+  const newer = stageSettingChange(db, 42, "calendar", "on", { now: 2000001 });
+  assert.equal(getSettingChange(db, 42, older.id).status, "cancelled");
+  assert.equal(cancelSettingChange(db, 42, newer.id, { now: 2000002 }), true);
+  assert.equal(cancelSettingChange(db, 42, newer.id, { now: 2000003 }), false);
+  await assert.rejects(confirmSettingChange(db, 42, newer.id, { ...opts, now: 2000004 }), /already used/);
+  assert.deepEqual(changes, [["monitoring", "paused"]]);
+  db.close();
+});
+
+test("forget clears pending settings without changing any active configuration", () => {
+  const db = new Database(":memory:");
+  const proposed = stageSettingChange(db, 42, "monitoring", "stopped");
+  clearWorkspace(db, 42);
+  assert.equal(getSettingChange(db, 42, proposed.id).status, "cancelled");
   db.close();
 });
