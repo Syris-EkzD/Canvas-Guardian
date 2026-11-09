@@ -156,6 +156,12 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
 
   async function execute(name, args = {}, userRequest = "") {
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("Invalid tool arguments");
+    if (name === "set_monitoring_mode" && !["running", "paused", "stopped"].includes(args.mode)) {
+      throw new Error("Invalid monitoring mode");
+    }
+    if (name === "set_calendar_mode" && !["on", "off"].includes(args.mode)) {
+      throw new Error("Invalid calendar mode");
+    }
     assertExplicitRequest(name, userRequest, args);
     switch (name) {
       case "list_activities": {
@@ -174,13 +180,11 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
       })) };
       case "get_guardian_status": return getStatus();
       case "set_monitoring_mode": {
-        if (!["running", "paused", "stopped"].includes(args.mode)) throw new Error("Invalid monitoring mode");
         const proposal = workspace.stageSettingChange(db, chatId, "monitoring", args.mode);
         await onSettingProposal(proposal);
         return { status: "AWAITING_TELEGRAM_CONFIRMATION", setting: "monitoring", mode: args.mode };
       }
       case "set_calendar_mode": {
-        if (!["on", "off"].includes(args.mode)) throw new Error("Invalid calendar mode");
         const proposal = workspace.stageSettingChange(db, chatId, "calendar", args.mode);
         await onSettingProposal(proposal);
         return { status: "AWAITING_TELEGRAM_CONFIRMATION", setting: "calendar", mode: args.mode };

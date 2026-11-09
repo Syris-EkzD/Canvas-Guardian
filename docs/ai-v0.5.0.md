@@ -1,12 +1,12 @@
-# Conversational Gemini and submission review (v0.5.0 candidate)
+# Conversational AI and submission review (v0.5.0 candidate)
 
-This feature is **not enabled unless GEMINI_API_KEY is configured**. It adds chat and drafting to the existing authorized private Telegram bot. No separate service or database is required.
+Gemini is the only implemented AI provider and remains the default. This feature is **not enabled unless GEMINI_API_KEY is configured**. It adds chat and drafting to the existing authorized private Telegram bot. No separate service or database is required.
 
 ## Capabilities and boundaries
 
-- Send a normal message or use /ai followed by a request. Gemini may list pending/today/week/saved activities, read an assignment and rubric, show announcements, report local monitoring/calendar settings, or change those local settings when you explicitly ask.
+- Send a normal message or use /ai followed by a request. AI may list pending/today/week/saved activities, read an assignment and rubric, show announcements, or report local monitoring/calendar settings. An explicit natural-language setting request only stages a proposal: the change is **not applied** until the authorized Telegram user presses its separate Confirm setting change button. Proposals expire after 15 minutes and cannot be replayed. /forget cancels pending proposals. Existing explicit /start, /stop, /pause, /resume and /calendar commands retain their behavior.
 - /draft <course ID> <assignment ID> explicitly requests a draft for one Canvas assignment. You can also ask in natural language after discovering the IDs. Revisions reference the saved draft version.
-- Drafts are generated using src/gemini-draft-engine.js and shown as full Telegram text. A new revision has a new draft identifier.
+- Drafts are generated through the common AI provider interface (currently implemented by the Gemini adapter), validated by src/gemini-draft-engine.js, and shown as full Telegram text. A new revision has a new draft identifier.
 - Ask Gemini to *prepare* that saved text draft for submission, or to prepare an HTTP(S) URL. The preview is stored locally. **Gemini has no submit function** and cannot approve a submission.
 - Canvas submission types currently supported: online_text_entry and online_url only. Files, quiz questions, external-tool activities, group submissions and resubmissions must be completed manually in Canvas.
 - Canvas credentials never enter Gemini's prompt. The model may receive requested assignment instructions, rubrics, activity names, due dates, announced text, saved draft excerpts, and chat history. Check Google's data policies and institution requirements before using this feature.
@@ -23,11 +23,11 @@ Any new submission preview cancels previously staged or reviewed previews. User 
 
 ## Local setup and behavior
 
-- Keep Node.js 24. Run npm ci and npm test. The deployment's GEMINI_API_KEY must have access to the configured model. GEMINI_MODEL is optional; the existing default is gemini-3.8-flash.
+- Keep Node.js 24. Run npm ci and npm test. Set AI_PROVIDER=gemini (or omit it), GEMINI_API_KEY, and optionally AI_MODEL. AI_MODEL takes precedence over the existing GEMINI_MODEL; the default is gemini-3.8-flash. Empty AI_MODEL uses the fallback. Other AI_PROVIDER values deliberately fail until an adapter is actually implemented.
 - Preserve the existing SQLite data/horus.db* state, along with the configured Canvas token, Google credentials and Telegram chat ID. AI tables are created lazily on first use.
 - The bot handles /start, /stop, /pause, /resume, /status, /pending, /today, /week, /activities, /announcements, /calendar, /report exactly as before.
 - Use /forget to remove recent local AI chat history and drafts and invalidate pending submission approvals. This does not remove Telegram messages, Google API logs or already-completed Canvas submissions.
-- Replies are bounded by message and tool-iteration limits. Large drafts and approval content are split to respect Telegram's message size.
+- Replies are bounded by message and tool-iteration limits. Large drafts and approval content are split to respect Telegram's message size. Chat and drafting share a two-method provider interface (`chat` and `draft`); the Gemini adapter owns SDK requests and translation. Adding a different provider later requires an adapter, configuration/credentials, and live acceptance tests, not a change to Canvas or Telegram authorization code.
 - The Gemini API and Canvas submission endpoints are the only new external services/operations. The scheduled monitoring jobs remain independent of Gemini.
 
 ## Manual acceptance tests on a **non-graded practice assignment**
@@ -41,8 +41,8 @@ Use a test assignment you own and are allowed to submit. Do **not** test a real 
 5. Tap Review full submission, inspect every chunk, then Cancel. Verify there is no Canvas submission.
 6. Prepare it again, review, then Confirm. Verify the Canvas timestamp and body match the approved version. Try tapping Confirm again; it must not submit a second time.
 7. For a separate test assignment allowing online_url, stage an HTTP(S) URL, review, confirm, and verify the URL.
-8. Try a locked or unsupported submission, an expired preview, and an unauthorized Telegram account. All must fail safely.
+8. Try a locked or unsupported submission, an expired preview, and an unauthorized Telegram account. All must fail safely. Request a monitoring or Calendar change in natural language; verify the setting stays unchanged until your separate Telegram button confirmation. Test cancel, expiry, unauthorized sender, and a repeated click.
 9. Simulate a Canvas submission timeout in a mocked test, **not against a real Canvas assignment**; check that the result is "uncertain" and never automatically retried.
 10. Verify the existing /report CSV import and systemd monitoring timers still behave as before.
 
-**Known limitation:** No live Gemini, Telegram or Canvas acceptance test is performed in GitHub CI. CI uses isolated mocks. Publishing a v0.5.0 release requires operator validation.
+**Known limitations:** No live Gemini, Telegram or Canvas acceptance test is performed in GitHub CI. CI uses isolated mocks. Natural-language action authorization uses a deliberately conservative phrase check of the user's current message; ambiguous phrasings can require an explicit rewording. Neither OpenAI nor self-hosted models have adapters or validated tool/JSON semantics yet. Publishing a v0.5.0 release requires operator validation.
