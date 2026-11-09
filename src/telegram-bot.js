@@ -732,7 +732,7 @@ async function handleMessage(message, runtime) {
     }
     let prompt = message.text.trim();
     if (command === "/ai") prompt = message.text.trim().slice(messageParts[0].length).trim();
-    if (command === "/draft") prompt = "The user explicitly requests an assignment draft: " +
+    if (command === "/draft") prompt = "Please draft the selected assignment. " +
       message.text.trim().slice(messageParts[0].length).trim();
     if (!prompt) {
       await send(message.chat.id, "Add your question or assignment details after the command.");

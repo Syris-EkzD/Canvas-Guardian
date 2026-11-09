@@ -80,34 +80,89 @@ const declarations = [
   }
 ];
 
-const INTENT = {
-  draft_assignment: /\b(draft|write|compose|generate|create)\b/i,
-  revise_draft: /\b(revise|rewrite|edit|improve|fix|adjust|update|shorten|lengthen|expand|rephrase)\b/i,
-  prepare_text_submission: /\b(prepare|stage|preview|submit|submission)\b/i,
-  prepare_url_submission: /\b(prepare|stage|preview|submit|submission)\b/i,
+const ACTIONS = Object.freeze({
+  draft_assignment: "(?:draft|write|compose|generate|create)",
+  revise_draft: "(?:revise|rewrite|edit|improve|fix|adjust|update|shorten|lengthen|expand|rephrase)",
+  prepare_text_submission: "(?:prepare|stage|preview|submit)",
+  prepare_url_submission: "(?:prepare|stage|preview|submit)",
+});
+
+const MONITORING_TARGET = "(?:(?:the|my|our)\\s+)?(?:(?:automatic|guardian)\\s+)*(?:monitoring|monitor|notifications|alerts|horus)";
+const CALENDAR_TARGET = "(?:(?:the|my|our)\\s+)?(?:(?:google|guardian)\\s+)?(?:calendar(?:\\s+(?:sync|synchronization))?|sync|synchronization)";
+
+const SETTING_ACTIONS = {
+  set_monitoring_mode: {
+    running: "(?:(?:start|resume|unpause|enable|turn\\s+on|switch\\s+on|run)\\s+" + MONITORING_TARGET +
+      "|set\\s+" + MONITORING_TARGET + "(?:\\s+mode)?\\s+to\\s+(?:running|active|on)|" +
+      MONITORING_TARGET + "\\s+(?:to\\s+be\\s+)?(?:running|active))",
+    paused: "(?:(?:pause|suspend)\\s+" + MONITORING_TARGET +
+      "|set\\s+" + MONITORING_TARGET + "(?:\\s+mode)?\\s+to\\s+(?:paused|suspended)|" +
+      MONITORING_TARGET + "\\s+(?:to\\s+be\\s+)?(?:paused|suspended))",
+    stopped: "(?:(?:stop|disable|turn\\s+off|switch\\s+off)\\s+" + MONITORING_TARGET +
+      "|(?:turn|switch)\\s+" + MONITORING_TARGET + "\\s+off|set\\s+" + MONITORING_TARGET +
+      "(?:\\s+mode)?\\s+to\\s+(?:stopped|disabled|off)|" + MONITORING_TARGET +
+      "\\s+(?:to\\s+be\\s+)?(?:stopped|disabled))",
+  },
+  set_calendar_mode: {
+    on: "(?:(?:enable|start|activate|turn\\s+on|switch\\s+on)\\s+" + CALENDAR_TARGET +
+      "|(?:turn|switch)\\s+" + CALENDAR_TARGET + "\\s+on|set\\s+" + CALENDAR_TARGET +
+      "\\s+to\\s+(?:on|enabled)|" + CALENDAR_TARGET + "\\s+(?:to\\s+be\\s+)?(?:on|enabled|active))",
+    off: "(?:(?:disable|stop|deactivate|turn\\s+off|switch\\s+off)\\s+" + CALENDAR_TARGET +
+      "|(?:turn|switch)\\s+" + CALENDAR_TARGET + "\\s+off|set\\s+" + CALENDAR_TARGET +
+      "\\s+to\\s+(?:off|disabled)|" + CALENDAR_TARGET + "\\s+(?:to\\s+be\\s+)?(?:off|disabled|stopped))",
+  },
 };
 
+function hasNegatedAction(message, actionPattern) {
+  const negation = "(?:don't|do not|doesn't|does not|didn't|did not|won't|will not|wouldn't|would not|shouldn't|should not|can't|cannot|never|no need to)";
+  const action = "(?:" + actionPattern + ")";
+  const direct = new RegExp("\\b" + negation +
+    "\\s+(?:(?:really|actually|ever)\\s+)?(?:(?:want|need|wish|intend|plan)\\s+)?" +
+    "(?:(?:you\\s+)?to\\s+)?" + action + "\\b", "i");
+  const indirect = new RegExp("\\b(?:don't|do not|doesn't|does not)\\s+think\\s+" +
+    "(?:i|we|you|they)\\s+should\\s+" + action + "\\b", "i");
+  const refusal = new RegExp("\\bnot\\s+(?:(?:going|planning)\\s+to\\s+|asking\\s+(?:you\\s+)?to\\s+)?" +
+    action + "\\b", "i");
+  const preference = new RegExp("\\b(?:rather|prefer)\\s+not\\s+to\\s+" + action + "\\b", "i");
+  return direct.test(message) || indirect.test(message) || refusal.test(message) || preference.test(message);
+}
+
+function isExplicitActionRequest(message, actionPattern) {
+  if (typeof message !== "string" || !message.trim()) return false;
+  const text = message.trim().replace(
+    new RegExp("^(?:(?:hey|hi|hello)(?:\\s+chat)?[,!.\\s]+)+", "i"), ""
+  );
+  const nonAffirmative = new RegExp(
+    "\\b(?:what\\s+if|suppose|hypothetically|assuming|unless|whether|maybe|perhaps|possibly|might)\\b|\\bif\\b",
+    "i"
+  );
+  if (!text || nonAffirmative.test(text)) return false;
+  if (hasNegatedAction(text, actionPattern)) return false;
+  const politeQuestion = new RegExp("^(?:can|could|would|will)\\s+(?:you|we)\\b", "i").test(text);
+  if (text.includes("?") && !politeQuestion) return false;
+
+  const action = "(?:" + actionPattern + ")";
+  const frames = [
+    new RegExp("^(?:please\\s+)?(?:help\\s+me\\s+(?:to\\s+)?)?" + action + "\\b", "i"),
+    new RegExp("^(?:can|could|would|will)\\s+(?:you|we)\\s+(?:please\\s+)?(?:help\\s+me\\s+(?:to\\s+)?)?" + action + "\\b", "i"),
+    new RegExp("^i\\s+(?:want|need)\\s+(?:(?:you\\s+)?to\\s+)?" + action + "\\b", "i"),
+    new RegExp("^i(?:'d like| would like)\\s+(?:(?:you\\s+)?to\\s+)?" + action + "\\b", "i"),
+    new RegExp("^(?:go ahead and|let's)\\s+" + action + "\\b", "i"),
+  ];
+  return frames.some((frame) => frame.test(text));
+}
+
+function settingActionPattern(name, mode) {
+  return SETTING_ACTIONS[name]?.[mode] ?? null;
+}
+
 function assertExplicitRequest(name, message, args) {
-  const negative = /\b(?:do not|don't|never|without|should not|not to|no need to)\s+(?:draft|write|compose|generate|create|revise|rewrite|edit|improve|fix|adjust|update|prepare|stage|preview|submit)\b/i;
-  if (INTENT[name] && (negative.test(message) || !INTENT[name].test(message))) {
-    throw new Error("Explicit user request required for " + name);
-  }
-  if (name !== "set_monitoring_mode" && name !== "set_calendar_mode") return;
-  const isCalendar = name === "set_calendar_mode";
-  const setting = isCalendar ? /\b(calendar|sync|synchronization)\b/i : /\b(monitoring|monitor|notifications|alerts|horus)\b/i;
-  const commands = isCalendar ? {
-    on: /\b(enable|start|turn on|switch on|activate|on)\b/i,
-    off: /\b(disable|stop|turn off|switch off|deactivate|off)\b/i,
-  } : {
-    running: /\b(start|resume|unpause|enable|run|running)\b/i,
-    paused: /\b(pause|paused|suspend|suspended)\b/i,
-    stopped: /\b(stop|stopped|disable|turn off)\b/i,
-  };
-  if (!setting.test(message) || !commands[args.mode]?.test(message) ||
-      /\b(?:do not|don't|never|without|should not|not to)\s+(?:start|resume|pause|stop|enable|disable|change|set)\b/i.test(message)) {
-    throw new Error("Explicit matching user request required for settings");
+  const actionPattern = ACTIONS[name] ?? settingActionPattern(name, args.mode);
+  if (actionPattern && !isExplicitActionRequest(message, actionPattern)) {
+    throw new Error("Explicit affirmative user action request required for " + name);
   }
 }
+
 
 function ensureHistory(db) {
   db.exec("CREATE TABLE IF NOT EXISTS ai_chat_history (" +

@@ -169,3 +169,76 @@ test("provider tool output cannot draft, stage, or alter settings without explic
   assert.ok(outputs[0].toolResults.every(result => /Explicit/.test(result.result.error)));
   db.close();
 });
+
+test("AI state-changing tools require affirmative action wording, not keyword matches", async () => {
+  const db = new Database(":memory:");
+  const proposals = [];
+  let draftCalls = 0;
+  let revisionCalls = 0;
+  let stageCalls = 0;
+  const savedDraftId = workspace.saveDraft(db, 42, context, {
+    draft: "Existing draft", explanation: "Existing explanation", gaps: [],
+  });
+  const ai = createAssistant({
+    db, chatId: 42,
+    listActivities: async () => [], getAnnouncements: async () => [], getStatus: () => ({}),
+    getContext: async () => context,
+    generate: async () => {
+      draftCalls += 1;
+      return { draft: "Generated draft", explanation: "Explanation", gaps: [] };
+    },
+    revise: async () => {
+      revisionCalls += 1;
+      return { draft: "Revised draft", explanation: "Explanation", gaps: [] };
+    },
+    stage: async () => {
+      stageCalls += 1;
+      return { id: "preview-1", title: "Essay", submissionType: "online_text_entry" };
+    },
+    onSettingProposal: async proposal => proposals.push(proposal),
+  });
+
+  const rejected = [
+    ["set_monitoring_mode", { mode: "paused" }, "Should I pause monitoring?"],
+    ["set_monitoring_mode", { mode: "paused" }, "What if I pause monitoring?"],
+    ["set_monitoring_mode", { mode: "paused" }, "Maybe pause monitoring."],
+    ["set_monitoring_mode", { mode: "paused" }, "Pause monitoring?"],
+    ["set_monitoring_mode", { mode: "paused" }, "Don't pause monitoring."],
+    ["set_monitoring_mode", { mode: "paused" }, "I don't want monitoring paused."],
+    ["draft_assignment", { course_id: "12", assignment_id: "34" }, "I don't want to draft this."],
+    ["draft_assignment", { course_id: "12", assignment_id: "34" }, "Would you draft this if I sent the rubric?"],
+    ["draft_assignment", { course_id: "12", assignment_id: "34" }, "Tell me how to draft this assignment."],
+    ["revise_draft", { draft_id: savedDraftId, feedback: "improve it" }, "Should I revise this draft?"],
+    ["prepare_text_submission", { draft_id: savedDraftId }, "I don't want to submit this."],
+    ["prepare_text_submission", { draft_id: savedDraftId }, "Can you explain what a submission is?"],
+    ["prepare_text_submission", { draft_id: savedDraftId }, "Submission?"],
+    ["prepare_url_submission", { course_id: "12", assignment_id: "34", url: "https://example.org" }, "What if I submit this URL?"],
+  ];
+  for (const [name, args, message] of rejected) {
+    await assert.rejects(ai.execute(name, args, message), /Explicit affirmative user action request/);
+  }
+  assert.equal(proposals.length, 0);
+  assert.equal(draftCalls, 0);
+  assert.equal(revisionCalls, 0);
+  assert.equal(stageCalls, 0);
+
+  const setting = await ai.execute("set_monitoring_mode", { mode: "paused" }, "Please pause monitoring");
+  assert.equal(setting.status, "AWAITING_TELEGRAM_CONFIRMATION");
+  assert.equal(proposals.length, 1);
+  const politeSetting = await ai.execute("set_calendar_mode", { mode: "off" }, "Can you disable calendar sync?");
+  assert.equal(politeSetting.status, "AWAITING_TELEGRAM_CONFIRMATION");
+  assert.equal(proposals.length, 2);
+
+  const generated = await ai.execute("draft_assignment", { course_id: "12", assignment_id: "34" },
+    "Could you draft assignment 12 34?");
+  assert.equal(generated.sentFullDraftToUser, true);
+  assert.equal(draftCalls, 1);
+  await ai.execute("revise_draft", { draft_id: savedDraftId, feedback: "improve the thesis" },
+    "Please revise the draft");
+  assert.equal(revisionCalls, 1);
+  const prepared = await ai.execute("prepare_text_submission", { draft_id: savedDraftId },
+    "Prepare the draft for submission review");
+  assert.equal(prepared.status, "AWAITING_USER_REVIEW");
+  assert.equal(stageCalls, 1);
+  db.close();
+});

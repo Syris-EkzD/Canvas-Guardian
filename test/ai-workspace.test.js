@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const Database = require("better-sqlite3");
+const { MAX_DRAFT_LENGTH } = require("../src/ai-limits");
 const {
   saveDraft, getDraft, stageSubmission, getRequest, reviewSubmission, cancelSubmission,
   confirmSubmission, postCanvasSubmission, stageSettingChange, getSettingChange,
@@ -186,5 +187,35 @@ test("forget clears pending settings without changing any active configuration",
   const proposed = stageSettingChange(db, 42, "monitoring", "stopped");
   clearWorkspace(db, 42);
   assert.equal(getSettingChange(db, 42, proposed.id).status, "cancelled");
+  db.close();
+});
+
+test("the shared 12,000-character limit is enforced without truncation at persistence and staging", async () => {
+  const { db, assignment, read } = fixture();
+  assert.equal(MAX_DRAFT_LENGTH, 12000);
+  const exact = "x".repeat(MAX_DRAFT_LENGTH);
+  const tooLong = "x".repeat(MAX_DRAFT_LENGTH + 1);
+  const context = { courseId: 12, assignmentId: 34 };
+
+  const savedId = saveDraft(db, 42, context, { draft: exact, explanation: "", gaps: [] });
+  assert.equal(getDraft(db, 42, savedId).body, exact);
+  assert.throws(() => saveDraft(db, 42, context, { draft: tooLong, explanation: "", gaps: [] }),
+    /12,000-character limit/);
+
+  let reads = 0;
+  const countedRead = async () => {
+    reads += 1;
+    return read();
+  };
+  const pending = await stageSubmission(db, 42, {
+    courseId: 12, assignmentId: 34, submissionType: "online_text_entry", payload: exact,
+  }, { read: countedRead });
+  assert.equal(getRequest(db, 42, pending.id).payload, exact);
+  const readsAtBoundary = reads;
+  await assert.rejects(stageSubmission(db, 42, {
+    courseId: 12, assignmentId: 34, submissionType: "online_text_entry", payload: tooLong,
+  }, { read: countedRead }), /12,000-character draft limit/);
+  assert.equal(reads, readsAtBoundary);
+  assert.equal(assignment.id, 34);
   db.close();
 });

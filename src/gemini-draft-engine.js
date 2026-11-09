@@ -1,9 +1,9 @@
 const { resolveProvider, selectedModel } = require("./ai-provider");
+const { MAX_DRAFT_LENGTH } = require("./ai-limits");
 
 const TIMEOUT_MS = 45_000;
 const MAX_OUTPUT_TOKENS = 4_096;
 const MAX_CONTEXT_CHARS = 24_000;
-const MAX_DRAFT_CHARS = 24_000;
 const MAX_FEEDBACK_CHARS = 4_000;
 
 class DraftError extends Error {
@@ -19,7 +19,12 @@ function boundedString(value, name, max, required = false) {
   if (typeof value !== "string" || (required && !value.trim())) {
     throw new DraftError("invalid_input", `${name} must be non-empty text`);
   }
-  if (value.length > max) throw new DraftError("input_too_large", `${name} exceeds ${max} characters`);
+  if (value.length > max) {
+    if (name === "draft") {
+      throw new DraftError("input_too_large", `Draft exceeds the ${MAX_DRAFT_LENGTH.toLocaleString("en-US")}-character limit`);
+    }
+    throw new DraftError("input_too_large", `${name} exceeds ${max} characters`);
+  }
   return value.trim();
 }
 
@@ -73,9 +78,12 @@ function parseDraftResponse(response) {
       !Array.isArray(result.gaps) || !result.gaps.every((gap) => typeof gap === "string")) {
     throw new DraftError("invalid_response", "AI provider returned incomplete draft data");
   }
-  if (result.draft.length > MAX_DRAFT_CHARS || result.explanation.length > 4_000 ||
-      result.gaps.length > 20 || result.gaps.some((gap) => gap.length > 500)) {
-    throw new DraftError("invalid_response", "AI provider returned oversized draft data");
+  if (result.draft.length > MAX_DRAFT_LENGTH) {
+    throw new DraftError("draft_too_large", `Draft exceeds the ${MAX_DRAFT_LENGTH.toLocaleString("en-US")}-character limit`);
+  }
+  if (result.explanation.length > 4_000 || result.gaps.length > 20 ||
+      result.gaps.some((gap) => gap.length > 500)) {
+    throw new DraftError("invalid_response", "AI provider returned oversized supporting draft data");
   }
   return {
     draft: result.draft.trim(),
@@ -105,7 +113,7 @@ async function requestDraft({ context, mode, draft, feedback, instructions, prov
   }
   const requestedModel = boundedString(selectedModel(model), "model", 100, true);
   const userInstructions = boundedString(instructions, "instructions", MAX_FEEDBACK_CHARS);
-  const existingDraft = mode === "revise" ? boundedString(draft, "draft", MAX_DRAFT_CHARS, true) : "";
+  const existingDraft = mode === "revise" ? boundedString(draft, "draft", MAX_DRAFT_LENGTH, true) : "";
   const revisionFeedback = mode === "revise" ? boundedString(feedback, "feedback", MAX_FEEDBACK_CHARS, true) : "";
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 120_000) {
     throw new DraftError("invalid_input", "Invalid Gemini timeout");

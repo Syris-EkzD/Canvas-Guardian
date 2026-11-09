@@ -1,8 +1,8 @@
 const { randomUUID } = require("node:crypto");
 const { canvasGet } = require("./canvas-client");
+const { MAX_DRAFT_LENGTH } = require("./ai-limits");
 
 const LIFETIME_MS = 15 * 60 * 1000;
-const MAX_TEXT = 12000;
 
 function ensureTables(db) {
   db.exec(
@@ -30,8 +30,11 @@ function validId(value) {
 
 function saveDraft(db, chatId, context, draft) {
   ensureTables(db);
-  if (typeof draft.draft !== "string" || !draft.draft.trim() || draft.draft.length > MAX_TEXT) {
-    throw new Error("Draft is empty or too long for the current Telegram workflow");
+  if (typeof draft?.draft !== "string" || !draft.draft.trim()) {
+    throw new Error("Draft must contain non-empty text");
+  }
+  if (draft.draft.length > MAX_DRAFT_LENGTH) {
+    throw new Error(`Draft exceeds the ${MAX_DRAFT_LENGTH.toLocaleString("en-US")}-character limit`);
   }
   const id = randomUUID();
   db.prepare("INSERT INTO ai_drafts VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
@@ -97,8 +100,12 @@ async function stageSubmission(db, chatId, input, { read = canvasGet } = {}) {
   }
   let payload;
   if (type === "online_text_entry") {
-    if (typeof input.payload !== "string" || !input.payload.trim() ||
-        input.payload.length > MAX_TEXT) throw new Error("Submission text is invalid or too long");
+    if (typeof input.payload !== "string" || !input.payload.trim()) {
+      throw new Error("Submission text must contain non-empty text");
+    }
+    if (input.payload.length > MAX_DRAFT_LENGTH) {
+      throw new Error(`Submission text exceeds the ${MAX_DRAFT_LENGTH.toLocaleString("en-US")}-character draft limit`);
+    }
     payload = input.payload;
   } else {
     payload = validateUrl(input.payload);

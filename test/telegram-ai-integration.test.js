@@ -92,3 +92,14 @@ test("expired Telegram setting confirmations cannot change Calendar state", asyn
   assert.equal(getSettingChange(f.db, 42, old.id).status, "pending");
   f.db.close();
 });
+
+test("setting callback verifies the Telegram sender separately from the authorized chat", async () => {
+  const f = setup();
+  const pending = stageSettingChange(f.db, 42, "monitoring", "paused");
+  const forged = f.callback(42, "gs:c:" + pending.id);
+  forged.from.id = 99;
+  await handleCallbackQuery(forged, f.runtime);
+  assert.equal(getSettingChange(f.db, 42, pending.id).status, "pending");
+  assert.equal(getMonitoringState(f.db), "running");
+  f.db.close();
+});
