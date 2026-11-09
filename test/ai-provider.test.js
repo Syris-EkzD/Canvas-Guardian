@@ -49,6 +49,60 @@ test("a non-Gemini mock powers conversation, tool exchanges and assignment draft
   db.close();
 });
 
+test("Gemini replays the original model content and matches function response IDs", async () => {
+  const db = new Database(":memory:");
+  const requests = [];
+  const callId = "gemini-call-001";
+  const signature = "opaque-thought-signature";
+  const modelContent = {
+    role: "model",
+    parts: [
+      {
+        functionCall: { name: "list_activities", args: { view: "pending" }, id: callId },
+        thoughtSignature: signature,
+      },
+      { text: "Additional original model part", thoughtSignature: "second-part-signature" },
+    ],
+  };
+  const responses = [
+    { candidates: [{ content: modelContent, finishReason: "STOP" }] },
+    {
+      text: "You have one pending activity.",
+      candidates: [{
+        content: { role: "model", parts: [{ text: "You have one pending activity." }] },
+        finishReason: "STOP",
+      }],
+    },
+  ];
+  const client = {
+    models: {
+      generateContent: async request => {
+        requests.push(request);
+        return responses.shift();
+      },
+    },
+  };
+  const assistant = createAssistant({
+    db, chatId: 42, client,
+    listActivities: async () => [{ courseId: "12", assignmentId: "34", title: "Essay" }],
+    getAnnouncements: async () => [],
+    getStatus: () => ({}),
+  });
+
+  assert.equal(await assistant.talk("What's pending?"), "You have one pending activity.");
+  assert.equal(requests.length, 2);
+  assert.strictEqual(requests[1].contents[1], modelContent);
+  assert.equal(requests[1].contents[1].parts[0].thoughtSignature, signature);
+  assert.equal(requests[1].contents[1].parts[1].thoughtSignature, "second-part-signature");
+  const functionResponse = requests[1].contents[2].parts[0].functionResponse;
+  assert.equal(functionResponse.name, "list_activities");
+  assert.equal(functionResponse.id, callId);
+  assert.deepEqual(functionResponse.response.result.activities, [
+    { courseId: "12", assignmentId: "34", title: "Essay" },
+  ]);
+  db.close();
+});
+
 test("AI provider selection defaults to Gemini and rejects unknown providers without fallback", () => {
   const original = process.env.AI_PROVIDER;
   const model = process.env.AI_MODEL;

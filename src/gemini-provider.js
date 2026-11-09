@@ -8,6 +8,9 @@ function createGeminiProvider({ client, apiKey } = {}) {
       if (message.role === "user" || message.role === "assistant" && typeof message.text === "string") {
         return { role: message.role === "assistant" ? "model" : "user", parts: [{ text: message.text }] };
       }
+      if (message.role === "assistant" && message.providerContext !== undefined) {
+        return message.providerContext;
+      }
       if (message.role === "assistant" && Array.isArray(message.toolCalls)) {
         return { role: "model", parts: message.toolCalls.map(({ name, args, id }) => ({
           functionCall: { name, args, ...(id ? { id } : {}) },
@@ -45,10 +48,13 @@ function createGeminiProvider({ client, apiKey } = {}) {
           httpOptions: { timeout: 45000 },
         },
       }));
-      const calls = response.functionCalls ||
-        response.candidates[0].content?.parts?.filter(part => part.functionCall).map(part => part.functionCall) || [];
+      const modelContent = response.candidates[0].content;
+      const calls = modelContent?.parts?.filter(part => part.functionCall).map(part => part.functionCall) || [];
       if (calls.length) {
-        return { toolCalls: calls.map(({ name, args, id }) => ({ name, args, ...(id ? { id } : {}) })) };
+        return {
+          toolCalls: calls.map(({ name, args, id }) => ({ name, args, ...(id ? { id } : {}) })),
+          providerContext: modelContent,
+        };
       }
       return { text: response.text };
     },

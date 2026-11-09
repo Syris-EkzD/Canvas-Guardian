@@ -136,6 +136,13 @@ function hasNegatedAction(message, actionPattern) {
   return direct.test(message) || indirect.test(message) || refusal.test(message) || preference.test(message);
 }
 
+function hasTrailingRetraction(message) {
+  // Only treat a short cancellation/retraction at the end of the message as overriding intent.
+  // This avoids mistaking ordinary constraints such as "don't use first person" for cancellation.
+  const retraction = /(?:^|[.!?;,]\\s*)(?:(?:actually|wait|no|sorry|on second thought)\\s*[,;:]?\\s*)?(?:don['’]t|do not|never mind|nevermind|cancel(?: that)?|scratch that|forget it|hold on|hold off|stop|i changed my mind|i['’]ve changed my mind|no)(?:\\s+(?:do it|do that|that|it|the request|the action))?[.!?]*$/i;
+  return retraction.test(message.trim());
+}
+
 function isExplicitActionRequest(message, actionPattern) {
   if (typeof message !== "string" || !message.trim()) return false;
   const text = message.trim().replace(
@@ -146,6 +153,7 @@ function isExplicitActionRequest(message, actionPattern) {
     "i"
   );
   if (!text || nonAffirmative.test(text)) return false;
+  if (hasTrailingRetraction(text)) return false;
   if (hasNegatedAction(text, actionPattern)) return false;
   const politeQuestion = new RegExp("^(?:can|could|would|will)\\s+(?:you|we)\\b", "i").test(text);
   if (text.includes("?") && !politeQuestion) return false;
@@ -322,7 +330,11 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
         return answer;
       }
       if (calls.length > 3) throw new Error("Too many tool calls");
-      messages.push({ role: "assistant", toolCalls: calls });
+      messages.push({
+        role: "assistant",
+        toolCalls: calls,
+        ...(result.providerContext !== undefined ? { providerContext: result.providerContext } : {}),
+      });
       const responses = [];
       for (const call of calls) {
         let outcome;
