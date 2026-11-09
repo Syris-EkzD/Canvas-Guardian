@@ -139,7 +139,7 @@ function hasNegatedAction(message, actionPattern) {
 function hasTrailingRetraction(message) {
   // Only treat a short cancellation/retraction at the end of the message as overriding intent.
   // This avoids mistaking ordinary constraints such as "don't use first person" for cancellation.
-  const retraction = /(?:^|[.!?;,]\\s*)(?:(?:actually|wait|no|sorry|on second thought)\\s*[,;:]?\\s*)?(?:don['’]t|do not|never mind|nevermind|cancel(?: that)?|scratch that|forget it|hold on|hold off|stop|i changed my mind|i['’]ve changed my mind|no)(?:\\s+(?:do it|do that|that|it|the request|the action))?[.!?]*$/i;
+  const retraction = /(?:^|[.!?;,]\s*)(?:(?:actually|wait|no|sorry|on second thought)\s*[,;:]?\s*)?(?:don['’]t|do not|never mind|nevermind|cancel(?: that)?|scratch that|forget it|hold on|hold off|stop|i changed my mind|i['’]ve changed my mind|no)(?:\s+(?:do it|do that|that|it|the request|the action))?[.!?]*$/i;
   return retraction.test(message.trim());
 }
 
