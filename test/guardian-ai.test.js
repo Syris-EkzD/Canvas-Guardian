@@ -54,6 +54,14 @@ test("Gemini tool calling uses authorized structured data and keeps bounded hist
   db.close();
 });
 
+test("affirmative preparation request accepts a demonstrative target", async () => {
+  const { db, ai } = fixture();
+  const pending = await ai.execute("prepare_text_submission", { draft_id: "saved-draft" },
+    "Prepare that draft for submission review");
+  assert.equal(pending.status, "AWAITING_USER_REVIEW");
+  db.close();
+});
+
 test("Gemini has no direct Canvas submit tool; prepared draft is reviewed separately", async () => {
   const { db, ai } = fixture();
   const events = [];

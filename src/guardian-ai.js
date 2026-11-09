@@ -82,7 +82,7 @@ const declarations = [
 
 const DRAFT_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:assignment|essay|reflection|response|paper|report|answer|work|draft|it|this)";
 const REVISION_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:draft|assignment|essay|reflection|response|paper|report|answer|work|thesis|introduction|conclusion|paragraph|section|it|this)";
-const SUBMISSION_TEXT_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:draft|text|submission(?:\\s+preview)?|response|work|it|this)";
+const SUBMISSION_TEXT_TARGET = "(?:(?:the|this|that|my|a|an|selected)\\s+)?(?:draft|text|submission(?:\\s+preview)?|response|work|it|this|that)";
 const SUBMISSION_URL_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:url|link|website|submission\\s+url|submission\\s+link)";
 
 const ACTIONS = Object.freeze({
