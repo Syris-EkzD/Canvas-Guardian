@@ -211,7 +211,10 @@ test("AI state-changing tools require affirmative action wording, not keyword ma
     ["revise_draft", { draft_id: savedDraftId, feedback: "improve it" }, "Should I revise this draft?"],
     ["prepare_text_submission", { draft_id: savedDraftId }, "I don't want to submit this."],
     ["prepare_text_submission", { draft_id: savedDraftId }, "Can you explain what a submission is?"],
+    ["prepare_text_submission", { draft_id: savedDraftId }, "Can you prepare for my exam?"],
     ["prepare_text_submission", { draft_id: savedDraftId }, "Submission?"],
+    ["draft_assignment", { course_id: "12", assignment_id: "34" }, "Can you create a new assignment?"],
+    ["prepare_url_submission", { course_id: "12", assignment_id: "34", url: "https://example.org" }, "Please prepare for the exam."],
     ["prepare_url_submission", { course_id: "12", assignment_id: "34", url: "https://example.org" }, "What if I submit this URL?"],
   ];
   for (const [name, args, message] of rejected) {

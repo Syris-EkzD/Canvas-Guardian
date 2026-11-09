@@ -80,11 +80,20 @@ const declarations = [
   }
 ];
 
+const DRAFT_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:assignment|essay|reflection|response|paper|report|answer|work|draft|it|this)";
+const REVISION_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:draft|assignment|essay|reflection|response|paper|report|answer|work|thesis|introduction|conclusion|paragraph|section|it|this)";
+const SUBMISSION_TEXT_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:draft|text|submission(?:\\s+preview)?|response|work|it|this)";
+const SUBMISSION_URL_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:url|link|website|submission\\s+url|submission\\s+link)";
+
 const ACTIONS = Object.freeze({
-  draft_assignment: "(?:draft|write|compose|generate|create)",
-  revise_draft: "(?:revise|rewrite|edit|improve|fix|adjust|update|shorten|lengthen|expand|rephrase)",
-  prepare_text_submission: "(?:prepare|stage|preview|submit)",
-  prepare_url_submission: "(?:prepare|stage|preview|submit)",
+  draft_assignment: "(?:(?:draft|write|compose|generate)\\s+" + DRAFT_TARGET +
+    "|create\\s+(?:(?:the|this|my|a|an|new|selected)\\s+)?(?:draft|assignment\\s+draft|essay\\s+draft|reflection\\s+draft|response\\s+draft))",
+  revise_draft: "(?:(?:revise|rewrite|edit|improve|fix|adjust|shorten|lengthen|expand|rephrase|update)\\s+" + REVISION_TARGET + ")",
+  prepare_text_submission: "(?:(?:prepare|stage|preview)\\s+" + SUBMISSION_TEXT_TARGET +
+    "(?:\\s+for\\s+submission(?:\\s+review)?)?|(?:prepare|stage|preview)\\s+for\\s+submission(?:\\s+review)?|" +
+    "submit\\s+(?:(?:the|this|my|selected)\\s+)?(?:draft|submission|response|work|it|this))",
+  prepare_url_submission: "(?:(?:prepare|stage|preview)\\s+" + SUBMISSION_URL_TARGET +
+    "(?:\\s+for\\s+submission)?|submit\\s+(?:(?:the|this|my|selected)\\s+)?(?:url|link|website))",
 });
 
 const MONITORING_TARGET = "(?:(?:the|my|our)\\s+)?(?:(?:automatic|guardian)\\s+)*(?:monitoring|monitor|notifications|alerts|horus)";
