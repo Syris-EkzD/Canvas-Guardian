@@ -313,6 +313,37 @@ async function sendLongText(send, chatId, text, finalMarkup) {
   }
 }
 
+function formatSubmissionDestination(preview) {
+  const course = preview.courseName
+    ? preview.courseName + " (ID " + preview.courseId + ")"
+    : "ID " + preview.courseId;
+  return "Course: " + course +
+    "\nAssignment: " + preview.title + " (ID " + preview.assignmentId + ")" +
+    (preview.assignmentUrl ? "\nCanvas assignment URL: " + preview.assignmentUrl : "") +
+    "\nAccepted submission types: " + (preview.acceptedSubmissionTypes?.length
+      ? preview.acceptedSubmissionTypes.join(", ") : "Not recorded; prepare again to verify") +
+    "\nSelected submission type: " + preview.submissionType;
+}
+
+function formatSubmissionGaps(preview) {
+  return preview.gaps?.length ? preview.gaps.join("; ") : "None identified; verify manually.";
+}
+
+async function sendAiSubmissionPreview(send, chatId, preview) {
+  await send(chatId,
+    "📤 PREPARED — NOT SUBMITTED\n" +
+    formatSubmissionDestination(preview) + "\n" +
+    "Content: " + preview.contentLength + " characters\n" +
+    "Preview: " + preview.preview + "\n" +
+    "Identified gaps: " + formatSubmissionGaps(preview) + "\n" +
+    "Recommendation: " + preview.recommendation +
+    "\n\nReview the full version before confirming (expires in 15 minutes).",
+    { inline_keyboard: [
+      [{ text: "🔍 Review full submission", callback_data: "ai:r:" + preview.id }],
+      [{ text: "❌ Cancel", callback_data: "ai:x:" + preview.id }],
+    ] });
+}
+
 async function handleAiSubmissionCallback(query, runtime) {
   const match = /^ai:([rcx]):([a-f0-9-]{36})$/.exec(query.data);
   if (!match) return;
@@ -326,8 +357,9 @@ async function handleAiSubmissionCallback(query, runtime) {
         "Preview was already used or is unavailable.");
     } else if (action === "r") {
       const detail = aiWorkspace.reviewSubmission(runtime.db, chatId, id);
-      await send(chatId, "FULL SUBMISSION REVIEW\nAssignment: " + detail.title +
-        "\nType: " + detail.submissionType +
+      await send(chatId, "FULL SUBMISSION REVIEW\n" +
+        formatSubmissionDestination(detail) +
+        "\nIdentified gaps: " + formatSubmissionGaps(detail) +
         "\nRecommendation: " + detail.recommendation +
         "\n\nRead the complete content below. Confirm only if you want EXACTLY this version sent to Canvas.");
       await sendLongText(send, chatId, detail.payload, { inline_keyboard: [
@@ -979,18 +1011,7 @@ async function main() {
         await sendLongText(send, config.TELEGRAM_ALLOWED_CHAT_ID, draft.draft);
       },
       onPreview: async (preview) => {
-        await send(config.TELEGRAM_ALLOWED_CHAT_ID,
-          "📤 PREPARED — NOT SUBMITTED\n" +
-          "Assignment: " + preview.title + "\n" +
-          "Submission type: " + preview.submissionType + "\n" +
-          "Content: " + preview.contentLength + " characters\n" +
-          "Preview: " + preview.preview + "\n\n" +
-          "Recommendation: " + preview.recommendation +
-          "\n\nReview the full version before confirming (expires in 15 minutes).",
-          { inline_keyboard: [
-            [{ text: "🔍 Review full submission", callback_data: "ai:r:" + preview.id }],
-            [{ text: "❌ Cancel", callback_data: "ai:x:" + preview.id }],
-          ] });
+        await sendAiSubmissionPreview(send, config.TELEGRAM_ALLOWED_CHAT_ID, preview);
       },
     });
   }
@@ -1042,7 +1063,7 @@ async function main() {
   }
 }
 
-module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, isAuthorizedAiMessage, handleAiSubmissionCallback, handleAiSettingCallback, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
+module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, isAuthorizedAiMessage, sendAiSubmissionPreview, formatSubmissionDestination, handleAiSubmissionCallback, handleAiSettingCallback, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
 
 if (require.main === module) {
   main().catch((error) => {

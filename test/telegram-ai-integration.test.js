@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const Database = require("better-sqlite3");
-const { handleMessage, handleCallbackQuery } = require("../src/telegram-bot");
+const { handleMessage, handleCallbackQuery, sendAiSubmissionPreview } = require("../src/telegram-bot");
 const { stageSubmission, getRequest, stageSettingChange, getSettingChange } = require("../src/ai-workspace");
 const { getCalendarSyncEnabled, getMonitoringState } = require("../src/monitoring-state");
 
@@ -101,5 +101,39 @@ test("setting callback verifies the Telegram sender separately from the authoriz
   await handleCallbackQuery(forged, f.runtime);
   assert.equal(getSettingChange(f.db, 42, pending.id).status, "pending");
   assert.equal(getMonitoringState(f.db), "running");
+  f.db.close();
+});
+
+test("submission preview and full review identify Canvas destination and preserve the full payload", async () => {
+  const f = setup();
+  const content = "Exact work from History class < & >".repeat(120);
+  const pending = await stageSubmission(f.db, 42, {
+    courseId: "12", assignmentId: "34", submissionType: "online_text_entry",
+    payload: content, gaps: ["Add a bibliography"], advice: "Check citations",
+  }, { read: async () => ({
+    id: 34, course_id: 12, name: "Essay", course_name: "History",
+    html_url: "https://canvas.example.edu/courses/12/assignments/34",
+    published: true, locked_for_user: false,
+    submission_types: ["online_text_entry", "online_url"],
+    submission: { workflow_state: "unsubmitted" },
+  }) });
+  await sendAiSubmissionPreview(f.runtime.send, 42, pending);
+  assert.match(f.sent[0][1], /Course: History \(ID 12\)/);
+  assert.match(f.sent[0][1], /Assignment: Essay \(ID 34\)/);
+  assert.match(f.sent[0][1], /Canvas assignment URL: https:\/\/canvas\.example\.edu\/courses\/12\/assignments\/34/);
+  assert.match(f.sent[0][1], /Accepted submission types: online_text_entry, online_url/);
+  assert.match(f.sent[0][1], /Selected submission type: online_text_entry/);
+  assert.match(f.sent[0][1], /Identified gaps: Add a bibliography/);
+  assert.match(f.sent[0][1], /Recommendation: Check citations/);
+
+  await handleCallbackQuery(f.callback(42, "ai:r:" + pending.id), f.runtime);
+  assert.equal(getRequest(f.db, 42, pending.id).status, "reviewed");
+  assert.match(f.sent[1][1], /Course: History \(ID 12\)/);
+  assert.match(f.sent[1][1], /Assignment: Essay \(ID 34\)/);
+  assert.match(f.sent[1][1], /Canvas assignment URL:/);
+  assert.match(f.sent[1][1], /Accepted submission types:/);
+  assert.match(f.sent[1][1], /Identified gaps: Add a bibliography/);
+  assert.equal(f.sent.slice(2).map(x => x[1]).join(""), content);
+  assert.equal(f.sent.at(-1)[2].inline_keyboard[0][0].callback_data, "ai:c:" + pending.id);
   f.db.close();
 });

@@ -297,7 +297,7 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
           : "Review accuracy, originality, citations and assignment requirements before submitting.";
         const preview = await stage(db, chatId, {
           courseId: saved.course_id, assignmentId: saved.assignment_id,
-          submissionType: "online_text_entry", payload: saved.body, advice,
+          submissionType: "online_text_entry", payload: saved.body, advice, gaps,
         });
         await onPreview(preview);
         return { previewId: preview.id, status: "AWAITING_USER_REVIEW", ...preview };

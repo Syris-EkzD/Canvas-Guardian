@@ -233,3 +233,64 @@ test("saved versions keep only the latest active pointer per chat", () => {
   assert.equal(getWorkingContext(db, 99).draftId, foreign);
   db.close();
 });
+
+test("identically named Canvas assignments show distinct verified destinations and submit exact reviewed text", async () => {
+  const db = new Database(":memory:");
+  const contents = ["Full first-course answer < & >", "Full second-course answer"];
+  const assign = (courseId, answer) => ({
+    courseId, assignmentId: 34, submissionType: "online_text_entry", payload: answer,
+    gaps: ["Missing references"], advice: "Review references before submission",
+  });
+  const read = async path => {
+    const courseId = path.includes("/courses/12/") ? 12 : 56;
+    return {
+      id: 34, course_id: courseId, name: "Essay", course_name: courseId === 12 ? "History" : "Biology",
+      html_url: "https://canvas.example.edu/courses/" + courseId + "/assignments/34",
+      published: true, locked_for_user: false, submission_types: ["online_text_entry", "online_url"],
+      submission: { workflow_state: "unsubmitted" },
+    };
+  };
+  const p1 = await stageSubmission(db, 42, assign(12, contents[0]), { read });
+  const p2 = await stageSubmission(db, 99, assign(56, contents[1]), { read });
+  assert.equal(p1.title, "Essay");
+  assert.equal(p2.title, "Essay");
+  assert.equal(p1.courseId, "12");
+  assert.equal(p2.courseId, "56");
+  assert.notEqual(p1.assignmentUrl, p2.assignmentUrl);
+  assert.equal(p1.assignmentUrl, "https://canvas.example.edu/courses/12/assignments/34");
+  assert.equal(p1.courseName, "History");
+  assert.deepEqual(p1.acceptedSubmissionTypes, ["online_text_entry", "online_url"]);
+  assert.deepEqual(p1.gaps, ["Missing references"]);
+  const review = reviewSubmission(db, 42, p1.id);
+  assert.equal(review.payload, contents[0]);
+  let submitted = 0;
+  await confirmSubmission(db, 42, p1.id, {
+    read,
+    submit: async item => {
+      submitted++;
+      assert.equal(item.course_id, "12");
+      assert.equal(item.assignment_id, "34");
+      assert.equal(item.payload, contents[0]);
+      return { submittedAt: "2026-11-10T08:00:00Z", submissionType: item.submission_type };
+    },
+  });
+  assert.equal(submitted, 1);
+  assert.equal(getRequest(db, 99, p2.id).status, "staged");
+  db.close();
+});
+
+test("old SQLite submission rows gain destination metadata column without data loss", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE ai_submissions (" +
+    "id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, course_id TEXT NOT NULL, " +
+    "assignment_id TEXT NOT NULL, assignment_title TEXT NOT NULL, " +
+    "submission_type TEXT NOT NULL, payload TEXT NOT NULL, advice TEXT NOT NULL, " +
+    "status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)");
+  db.prepare("INSERT INTO ai_submissions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    "old-preview", "42", "12", "34", "Essay", "online_text_entry", "Unchanged", "Review", "staged",
+    Date.now(), Date.now() + 900000);
+  const original = getRequest(db, 42, "old-preview");
+  assert.equal(original.payload, "Unchanged");
+  assert.equal(original.destination_json, null);
+  db.close();
+});

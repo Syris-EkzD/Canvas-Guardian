@@ -14,7 +14,8 @@ function ensureTables(db) {
       "id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, course_id TEXT NOT NULL, " +
       "assignment_id TEXT NOT NULL, assignment_title TEXT NOT NULL, " +
       "submission_type TEXT NOT NULL, payload TEXT NOT NULL, advice TEXT NOT NULL, " +
-      "status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);" +
+      "status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, " +
+      "destination_json TEXT);" +
     "CREATE TABLE IF NOT EXISTS ai_setting_confirmations (" +
       "id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, setting TEXT NOT NULL, " +
       "value TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, " +
@@ -23,6 +24,10 @@ function ensureTables(db) {
       "chat_id TEXT PRIMARY KEY, course_id TEXT NOT NULL, " +
       "assignment_id TEXT NOT NULL, draft_id TEXT);"
   );
+  // Existing SQLite submissions remain readable after adding destination metadata.
+  if (!db.prepare("PRAGMA table_info(ai_submissions)").all().some(col => col.name === "destination_json")) {
+    db.exec("ALTER TABLE ai_submissions ADD COLUMN destination_json TEXT");
+  }
 }
 
 function validId(value) {
@@ -118,6 +123,28 @@ async function readAssignment(courseId, assignmentId, read = canvasGet) {
   );
 }
 
+function validatedAssignmentUrl(value, courseId, assignmentId) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password ||
+        url.pathname.replace(/\\/$/, "") !== "/courses/" + courseId + "/assignments/" + assignmentId) return null;
+    if (process.env.CANVAS_BASE_URL && url.origin !== new URL(process.env.CANVAS_BASE_URL).origin) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function destinationMetadata(raw, input, courseId, assignmentId) {
+  return {
+    courseName: typeof raw.course_name === "string" ? raw.course_name.replace(/[\\r\\n]+/g, " ").slice(0, 120) : null,
+    assignmentUrl: validatedAssignmentUrl(raw.html_url, courseId, assignmentId),
+    acceptedSubmissionTypes: raw.submission_types.filter(type => typeof type === "string"),
+    gaps: Array.isArray(input.gaps) ? input.gaps.filter(gap => typeof gap === "string").slice(0, 20) : [],
+  };
+}
+
 async function stageSubmission(db, chatId, input, { read = canvasGet } = {}) {
   ensureTables(db);
   const courseId = validId(input.courseId);
@@ -143,11 +170,15 @@ async function stageSubmission(db, chatId, input, { read = canvasGet } = {}) {
   const id = randomUUID();
   const now = Date.now();
   const advice = typeof input.advice === "string" ? input.advice.slice(0, 500) : "";
+  const metadata = JSON.stringify(destinationMetadata(raw, input, courseId, assignmentId));
   // An older approval cannot be reused after a new version is prepared.
   db.prepare("UPDATE ai_submissions SET status = 'cancelled' WHERE chat_id = ? AND status IN ('staged', 'reviewed')").run(String(chatId));
-  db.prepare("INSERT INTO ai_submissions VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'staged', ?, ?)").run(
+  db.prepare("INSERT INTO ai_submissions " +
+    "(id, chat_id, course_id, assignment_id, assignment_title, submission_type, payload, " +
+    "advice, status, created_at, expires_at, destination_json) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'staged', ?, ?, ?)").run(
     id, String(chatId), courseId, assignmentId, String(raw.name || "Untitled assignment"),
-    type, payload, advice, now, now + LIFETIME_MS
+    type, payload, advice, now, now + LIFETIME_MS, metadata
   );
   return requestSummary(db, chatId, id);
 }
@@ -160,8 +191,13 @@ function getRequest(db, chatId, id) {
 function requestSummary(db, chatId, id) {
   const item = getRequest(db, chatId, id);
   if (!item) throw new Error("Submission request not found");
+  const destination = item.destination_json ? JSON.parse(item.destination_json) : {};
   return {
     id: item.id,
+    courseName: destination.courseName || null,
+    assignmentUrl: destination.assignmentUrl || null,
+    acceptedSubmissionTypes: destination.acceptedSubmissionTypes || [],
+    gaps: destination.gaps || [],
     title: item.assignment_title,
     courseId: item.course_id,
     assignmentId: item.assignment_id,
