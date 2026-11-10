@@ -128,7 +128,7 @@ function validatedAssignmentUrl(value, courseId, assignmentId) {
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" || url.username || url.password ||
-        url.pathname.replace(/\\/$/, "") !== "/courses/" + courseId + "/assignments/" + assignmentId) return null;
+        url.pathname.replace(/\/$/, "") !== "/courses/" + courseId + "/assignments/" + assignmentId) return null;
     if (process.env.CANVAS_BASE_URL && url.origin !== new URL(process.env.CANVAS_BASE_URL).origin) return null;
     return url.href;
   } catch {
@@ -138,7 +138,7 @@ function validatedAssignmentUrl(value, courseId, assignmentId) {
 
 function destinationMetadata(raw, input, courseId, assignmentId) {
   return {
-    courseName: typeof raw.course_name === "string" ? raw.course_name.replace(/[\\r\\n]+/g, " ").slice(0, 120) : null,
+    courseName: typeof raw.course_name === "string" ? raw.course_name.replace(/[\r\n]+/g, " ").slice(0, 120) : null,
     assignmentUrl: validatedAssignmentUrl(raw.html_url, courseId, assignmentId),
     acceptedSubmissionTypes: raw.submission_types.filter(type => typeof type === "string"),
     gaps: Array.isArray(input.gaps) ? input.gaps.filter(gap => typeof gap === "string").slice(0, 20) : [],
