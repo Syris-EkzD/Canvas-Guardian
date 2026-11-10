@@ -24,6 +24,12 @@ The Guardian runtime includes:
 - SQLite-backed monitoring and calendar state
 - systemd-based self-hosted operation
 
+## Conversational AI (v0.5.0 candidate)
+
+With `GEMINI_API_KEY` configured (default `AI_PROVIDER=gemini`), the authorized private Telegram bot also accepts natural-language conversations and `/ai` requests. Conversation and drafting use a minimal AI provider interface; other providers are not implemented yet. Gemini can query existing Guardian data and help draft and revise selected assignments. `/draft <course ID> <assignment ID>` starts drafting; `/forget` clears recent local AI conversation and draft state.
+
+**Monitoring and Calendar setting changes requested through AI also require a separate Telegram confirmation.** Canvas submissions require full-payload review and a separate explicit confirmation. For now only text-entry and URL submissions are supported. Guardian displays the assignment, allowed type, full exact payload and recommendation before presenting Confirm. The model has no direct Canvas submission tool, and ambiguous results are never automatically retried. See [v0.5.0 AI design and acceptance tests](docs/ai-v0.5.0.md). This candidate is not yet a published release.
+
 ## Academic Data Pipeline
 
 The Academic Data Pipeline:

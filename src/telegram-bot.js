@@ -16,6 +16,8 @@ const {
 const { requireEnvironment } = require("./runtime-config");
 const { createTelegramClient } = require("./telegram-client");
 const { createReportFromCsv } = require("./academic-pipeline");
+const { createAssistant, forgetConversation } = require("./guardian-ai");
+const aiWorkspace = require("./ai-workspace");
 const {
   clearActivityStatusOverride,
   getEffectiveActivityStatus,
@@ -40,6 +42,9 @@ const COMMANDS = Object.freeze([
   { command: "calendar", description: "Toggle calendar synchronization" },
   { command: "calendar_status", description: "Show calendar synchronization status" },
   { command: "report", description: "Create an Excel report from a Roll Call CSV" },
+  { command: "ai", description: "Ask AI for help with your Canvas work" },
+  { command: "draft", description: "Draft a specified assignment with AI" },
+  { command: "forget", description: "Clear AI history and pending approvals" },
   { command: "help", description: "Show available commands" },
 ]);
 
@@ -101,13 +106,40 @@ function createReportHandler({ telegram, maxCsvBytes = DEFAULT_CSV_LIMIT, create
   };
 }
 
-function createUpdateProcessor(initialOffset, handle, persist, isReport, onBackgroundError, handleCallback = async () => {}) {
+function createUpdateProcessor(initialOffset, handle, persist, isReport, onBackgroundError,
+  handleCallback = async () => {}, { isAiMessage = () => false, onAiBusy = async () => {} } = {}) {
   let offset = initialOffset;
+  const activeAiChats = new Set();
+
+  function runAiBackground(task, finished = () => {}) {
+    void Promise.resolve().then(task).catch(() => {
+      // Provider/Telegram errors may contain tokens or private student content.
+      try { onBackgroundError(new Error("AI background request failed")); } catch { /* keep polling alive */ }
+    }).finally(finished);
+  }
 
   return {
     getOffset: () => offset,
+    isAiBusy: (chatId) => activeAiChats.has(String(chatId)),
     async process(update) {
       if (update.update_id < offset) return;
+
+      if (update.message && !isReport(update.message) && isAiMessage(update.message)) {
+        const chatId = String(update.message.chat.id);
+        const busy = activeAiChats.has(chatId);
+        // Checkpoint before starting async AI work. As with background reports,
+        // an interrupted in-flight request may need the user to retry.
+        const nextOffset = update.update_id + 1;
+        persist(nextOffset);
+        offset = nextOffset;
+        if (busy) {
+          runAiBackground(() => onAiBusy(update.message));
+        } else {
+          activeAiChats.add(chatId);
+          runAiBackground(() => handle(update.message), () => activeAiChats.delete(chatId));
+        }
+        return;
+      }
 
       if (update.callback_query) {
         await handleCallback(update.callback_query);
@@ -271,6 +303,104 @@ function activityDetail(db, assignment) {
   };
 }
 
+async function sendLongText(send, chatId, text, finalMarkup) {
+  const content = String(text || "");
+  const chunks = [];
+  for (let i = 0; i < content.length; i += 3500) chunks.push(content.slice(i, i + 3500));
+  if (!chunks.length) chunks.push("(empty)");
+  for (let i = 0; i < chunks.length; i++) {
+    await send(chatId, chunks[i], i === chunks.length - 1 ? finalMarkup : undefined);
+  }
+}
+
+function formatSubmissionDestination(preview) {
+  const course = preview.courseName
+    ? preview.courseName + " (ID " + preview.courseId + ")"
+    : "ID " + preview.courseId;
+  return "Course: " + course +
+    "\nAssignment: " + preview.title + " (ID " + preview.assignmentId + ")" +
+    (preview.assignmentUrl ? "\nCanvas assignment URL: " + preview.assignmentUrl : "") +
+    "\nAccepted submission types: " + (preview.acceptedSubmissionTypes?.length
+      ? preview.acceptedSubmissionTypes.join(", ") : "Not recorded; prepare again to verify") +
+    "\nSelected submission type: " + preview.submissionType;
+}
+
+function formatSubmissionGaps(preview) {
+  return preview.gaps?.length ? preview.gaps.join("; ") : "None identified; verify manually.";
+}
+
+async function sendAiSubmissionPreview(send, chatId, preview) {
+  await send(chatId,
+    "📤 PREPARED — NOT SUBMITTED\n" +
+    formatSubmissionDestination(preview) + "\n" +
+    "Content: " + preview.contentLength + " characters\n" +
+    "Preview: " + preview.preview + "\n" +
+    "Identified gaps: " + formatSubmissionGaps(preview) + "\n" +
+    "Recommendation: " + preview.recommendation +
+    "\n\nReview the full version before confirming (expires in 15 minutes).",
+    { inline_keyboard: [
+      [{ text: "🔍 Review full submission", callback_data: "ai:r:" + preview.id }],
+      [{ text: "❌ Cancel", callback_data: "ai:x:" + preview.id }],
+    ] });
+}
+
+async function handleAiSubmissionCallback(query, runtime) {
+  const match = /^ai:([rcx]):([a-f0-9-]{36})$/.exec(query.data);
+  if (!match) return;
+  const [, action, id] = match;
+  const chatId = query.message.chat.id;
+  const send = runtime.telegram.sendMessage;
+  try {
+    if (action === "x") {
+      const cancelled = aiWorkspace.cancelSubmission(runtime.db, chatId, id);
+      await send(chatId, cancelled ? "Submission preview cancelled. Nothing was sent to Canvas." :
+        "Preview was already used or is unavailable.");
+    } else if (action === "r") {
+      const detail = aiWorkspace.reviewSubmission(runtime.db, chatId, id);
+      await send(chatId, "FULL SUBMISSION REVIEW\n" +
+        formatSubmissionDestination(detail) +
+        "\nIdentified gaps: " + formatSubmissionGaps(detail) +
+        "\nRecommendation: " + detail.recommendation +
+        "\n\nRead the complete content below. Confirm only if you want EXACTLY this version sent to Canvas.");
+      await sendLongText(send, chatId, detail.payload, { inline_keyboard: [
+        [{ text: "✅ Confirm Canvas submission", callback_data: "ai:c:" + id }],
+        [{ text: "❌ Cancel", callback_data: "ai:x:" + id }],
+      ] });
+    } else if (action === "c") {
+      const result = await aiWorkspace.confirmSubmission(runtime.db, chatId, id);
+      await send(chatId, "✅ Canvas confirmed the submission.\nType: " +
+        result.submissionType + "\nSubmitted at: " + result.submittedAt);
+    }
+  } catch (error) {
+    const msg = error.message && /^(Submission|Canvas assignment)/.test(error.message)
+      ? error.message : "Could not process approval. No automatic retry will occur; check Canvas before trying again.";
+    await send(chatId, msg);
+  }
+}
+
+async function handleAiSettingCallback(query, runtime) {
+  const match = /^gs:([cx]):([a-f0-9-]{36})$/.exec(query.data);
+  if (!match) return;
+  const [, action, id] = match;
+  const chatId = query.message.chat.id;
+  const send = runtime.telegram.sendMessage;
+  try {
+    if (action === "x") {
+      const cancelled = aiWorkspace.cancelSettingChange(runtime.db, chatId, id);
+      await send(chatId, cancelled ? "Setting change cancelled. Nothing was changed." :
+        "Setting confirmation has expired or was already consumed.");
+    } else {
+      const applied = await aiWorkspace.confirmSettingChange(runtime.db, chatId, id, {
+        updateMonitoring: runtime.updateMonitoring || (mode => setMonitoringState(runtime.db, mode)),
+        updateCalendar: runtime.updateCalendar || (enabled => setCalendarSyncEnabled(runtime.db, enabled)),
+      });
+      await send(chatId, "✅ Guardian " + applied.setting + " setting changed to " + applied.value + ".");
+    }
+  } catch {
+    await send(chatId, "Setting confirmation expired, unavailable or already used. Check /status before requesting a new change.");
+  }
+}
+
 async function handleCallbackQuery(query, runtime) {
   const { db, allowedChatId, telegram, assignmentCache, getAssignments = getAllActiveCourseAssignments,
     getFreshAssignment = getAssignmentByKey } = runtime;
@@ -290,6 +420,16 @@ async function handleCallbackQuery(query, runtime) {
     return;
   }
   const data = query.data;
+  if (typeof data === "string" && data.startsWith("ai:")) {
+    await answer("Checking approval…");
+    await handleAiSubmissionCallback(query, runtime);
+    return;
+  }
+  if (typeof data === "string" && data.startsWith("gs:")) {
+    await answer("Checking setting confirmation…");
+    await handleAiSettingCallback(query, runtime);
+    return;
+  }
   const list = /^a1:l:([ptwa]):(0|[1-9]\d{0,5})$/.exec(data);
   const refresh = /^a1:f:([ptwa]):(0|[1-9]\d{0,5})$/.exec(data);
   const item = /^a1:([scdr]):([1-9]\d*:[1-9]\d*)$/.exec(data);
@@ -456,6 +596,15 @@ async function sendAnnouncementList(send, chatId, announcements) {
   if (message.trim()) {
     await send(chatId, message.trim());
   }
+}
+
+function isAuthorizedAiMessage(message, allowedChatId) {
+  if (message?.chat?.type !== "private" ||
+      String(message.chat.id) !== String(allowedChatId) ||
+      (message.from && String(message.from.id) !== String(allowedChatId)) ||
+      typeof message.text !== "string" || !message.text.trim()) return false;
+  const command = message.text.trim().split(/\s+/)[0].split("@")[0].toLowerCase();
+  return !command.startsWith("/") || command === "/ai" || command === "/draft";
 }
 
 async function handleMessage(message, runtime) {
@@ -633,6 +782,46 @@ async function handleMessage(message, runtime) {
     return;
   }
 
+  if (command === "/forget") {
+    if (runtime.isAiBusy?.(message.chat.id)) {
+      await send(message.chat.id, "An AI request is still running. Use /forget after it finishes.");
+      return;
+    }
+    forgetConversation(db, message.chat.id);
+    await send(message.chat.id, "AI history and pending approvals cleared. Previously sent messages remain in Telegram.");
+    return;
+  }
+
+  if (command === "/ai" && messageParts.length === 1) {
+    await send(message.chat.id, "Ask a question naturally, or use /ai followed by your request. I can inspect assignments, draft and revise work, or prepare a submission for your explicit review. Only a separate Confirm button can submit to Canvas.");
+    return;
+  }
+
+  if (!command.startsWith("/") || ["/ai", "/draft"].includes(command)) {
+    if (!runtime.assistant) {
+      await send(message.chat.id, "AI is not configured on this Guardian instance. Configure AI_PROVIDER and its API key.");
+      return;
+    }
+    let prompt = message.text.trim();
+    if (command === "/ai") prompt = message.text.trim().slice(messageParts[0].length).trim();
+    if (command === "/draft") prompt = "Please draft the selected assignment. " +
+      message.text.trim().slice(messageParts[0].length).trim();
+    if (!prompt) {
+      await send(message.chat.id, "Add your question or assignment details after the command.");
+      return;
+    }
+    let answer;
+    try {
+      answer = await runtime.assistant.talk(prompt);
+    } catch {
+      // SDK/provider failures may contain sensitive request data; never log raw details.
+      await send(message.chat.id, "AI could not complete that request. Try again or use the regular Guardian commands.");
+      return;
+    }
+    await sendLongText(send, message.chat.id, answer);
+    return;
+  }
+
   if (command === "/report") {
     await send(message.chat.id, "Upload one official Roll Call CSV document in this private chat. I’ll return an Excel report with Summary, Assignments, and Attendance sheets. The default CSV limit is 5 MiB (configurable by the operator).");
     return;
@@ -786,11 +975,52 @@ async function main() {
     telegram,
     assignmentCache: createAssignmentCache(getAllActiveCourseAssignments),
   };
+  if (process.env.GEMINI_API_KEY || (process.env.AI_PROVIDER && process.env.AI_PROVIDER !== "gemini")) {
+    runtime.assistant = createAssistant({
+      db, chatId: config.TELEGRAM_ALLOWED_CHAT_ID,
+      listActivities: async (view) => {
+        const assignments = await runtime.assignmentCache.get();
+        return activityCandidates(assignments, db, view).slice(0, 60).map(item => ({
+          courseId: item.courseId, assignmentId: item.id, course: item.course,
+          key: item.key, title: item.name, dueAt: item.dueAt,
+          submissionTypes: item.submissionTypes, submitted: item.submitted,
+        }));
+      },
+      getAnnouncements: () => getRecentAnnouncements(10),
+      getStatus: () => ({
+        monitoring: getMonitoringState(db),
+        calendarEnabled: getCalendarSyncEnabled(db),
+        scheduleConfigured: "ten-minute systemd timers (not live health verified)",
+      }),
+      onSettingProposal: async (proposal) => {
+        await send(config.TELEGRAM_ALLOWED_CHAT_ID,
+          "⚙️ SETTING CHANGE — NOT APPLIED\n" +
+          "Setting: " + proposal.setting + "\nRequested value: " + proposal.value +
+          "\n\nConfirm this change yourself within 15 minutes.",
+          { inline_keyboard: [
+            [{ text: "✅ Confirm setting change", callback_data: "gs:c:" + proposal.id }],
+            [{ text: "❌ Cancel", callback_data: "gs:x:" + proposal.id }],
+          ] });
+      },
+      onDraft: async ({ id, context, draft }) => {
+        await sendLongText(send, config.TELEGRAM_ALLOWED_CHAT_ID,
+          "📝 Draft for " + context.title + "\nDraft ID: " + id +
+          "\nAssessment: " + draft.explanation +
+          "\nGaps: " + (draft.gaps.join("; ") || "None identified; verify manually.") +
+          "\n\nDraft text follows:");
+        await sendLongText(send, config.TELEGRAM_ALLOWED_CHAT_ID, draft.draft);
+      },
+      onPreview: async (preview) => {
+        await sendAiSubmissionPreview(send, config.TELEGRAM_ALLOWED_CHAT_ID, preview);
+      },
+    });
+  }
+
   const processMessage = async (message) => {
     try {
       await handleMessage(message, runtime);
     } catch (error) {
-      console.error("Command failed:", error.message);
+      console.error("Telegram command failed; details suppressed.");
       if (String(message?.chat?.id) === String(config.TELEGRAM_ALLOWED_CHAT_ID)) {
         await send(message.chat.id, "Horus could not complete that command. Please try again.").catch(() => {});
       }
@@ -802,9 +1032,15 @@ async function main() {
     (offset) => setSetting(db, "telegram_update_offset", String(offset)),
     (message) => Boolean(message?.document && message.chat?.type === "private" &&
       String(message.chat.id) === String(config.TELEGRAM_ALLOWED_CHAT_ID)),
-    (error) => console.error("Background report failed:", error.message),
-    (query) => handleCallbackQuery(query, runtime)
+    (error) => console.error("Background task failed:", error.message),
+    (query) => handleCallbackQuery(query, runtime),
+    {
+      isAiMessage: (message) => isAuthorizedAiMessage(message, config.TELEGRAM_ALLOWED_CHAT_ID),
+      onAiBusy: (message) => send(message.chat.id,
+        "Your previous AI request is still processing. Please retry this message when it finishes."),
+    }
   );
+  runtime.isAiBusy = processor.isAiBusy;
 
   console.log("Horus Telegram command bot is listening.");
   console.log("Send /pending, /today, or /week in Telegram.");
@@ -827,7 +1063,7 @@ async function main() {
   }
 }
 
-module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
+module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, isAuthorizedAiMessage, sendAiSubmissionPreview, formatSubmissionDestination, handleAiSubmissionCallback, handleAiSettingCallback, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
 
 if (require.main === module) {
   main().catch((error) => {
