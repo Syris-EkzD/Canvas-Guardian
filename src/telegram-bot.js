@@ -106,13 +106,40 @@ function createReportHandler({ telegram, maxCsvBytes = DEFAULT_CSV_LIMIT, create
   };
 }
 
-function createUpdateProcessor(initialOffset, handle, persist, isReport, onBackgroundError, handleCallback = async () => {}) {
+function createUpdateProcessor(initialOffset, handle, persist, isReport, onBackgroundError,
+  handleCallback = async () => {}, { isAiMessage = () => false, onAiBusy = async () => {} } = {}) {
   let offset = initialOffset;
+  const activeAiChats = new Set();
+
+  function runAiBackground(task, finished = () => {}) {
+    void Promise.resolve().then(task).catch(() => {
+      // Provider/Telegram errors may contain tokens or private student content.
+      try { onBackgroundError(new Error("AI background request failed")); } catch { /* keep polling alive */ }
+    }).finally(finished);
+  }
 
   return {
     getOffset: () => offset,
+    isAiBusy: (chatId) => activeAiChats.has(String(chatId)),
     async process(update) {
       if (update.update_id < offset) return;
+
+      if (update.message && !isReport(update.message) && isAiMessage(update.message)) {
+        const chatId = String(update.message.chat.id);
+        const busy = activeAiChats.has(chatId);
+        // Checkpoint before starting async AI work. As with background reports,
+        // an interrupted in-flight request may need the user to retry.
+        const nextOffset = update.update_id + 1;
+        persist(nextOffset);
+        offset = nextOffset;
+        if (busy) {
+          runAiBackground(() => onAiBusy(update.message));
+        } else {
+          activeAiChats.add(chatId);
+          runAiBackground(() => handle(update.message), () => activeAiChats.delete(chatId));
+        }
+        return;
+      }
 
       if (update.callback_query) {
         await handleCallback(update.callback_query);
@@ -539,6 +566,15 @@ async function sendAnnouncementList(send, chatId, announcements) {
   }
 }
 
+function isAuthorizedAiMessage(message, allowedChatId) {
+  if (message?.chat?.type !== "private" ||
+      String(message.chat.id) !== String(allowedChatId) ||
+      (message.from && String(message.from.id) !== String(allowedChatId)) ||
+      typeof message.text !== "string" || !message.text.trim()) return false;
+  const command = message.text.trim().split(/\\s+/)[0].split("@")[0].toLowerCase();
+  return !command.startsWith("/") || command === "/ai" || command === "/draft";
+}
+
 async function handleMessage(message, runtime) {
   const { db, allowedChatId, send, reportDocument, assignmentCache,
     getAssignments = getAllActiveCourseAssignments } = runtime;
@@ -715,6 +751,10 @@ async function handleMessage(message, runtime) {
   }
 
   if (command === "/forget") {
+    if (runtime.isAiBusy?.(message.chat.id)) {
+      await send(message.chat.id, "An AI request is still running. Use /forget after it finishes.");
+      return;
+    }
     forgetConversation(db, message.chat.id);
     await send(message.chat.id, "AI history and pending approvals cleared. Previously sent messages remain in Telegram.");
     return;
@@ -959,7 +999,7 @@ async function main() {
     try {
       await handleMessage(message, runtime);
     } catch (error) {
-      console.error("Command failed:", error.message);
+      console.error("Telegram command failed; details suppressed.");
       if (String(message?.chat?.id) === String(config.TELEGRAM_ALLOWED_CHAT_ID)) {
         await send(message.chat.id, "Horus could not complete that command. Please try again.").catch(() => {});
       }
@@ -971,9 +1011,15 @@ async function main() {
     (offset) => setSetting(db, "telegram_update_offset", String(offset)),
     (message) => Boolean(message?.document && message.chat?.type === "private" &&
       String(message.chat.id) === String(config.TELEGRAM_ALLOWED_CHAT_ID)),
-    (error) => console.error("Background report failed:", error.message),
-    (query) => handleCallbackQuery(query, runtime)
+    (error) => console.error("Background task failed:", error.message),
+    (query) => handleCallbackQuery(query, runtime),
+    {
+      isAiMessage: (message) => isAuthorizedAiMessage(message, config.TELEGRAM_ALLOWED_CHAT_ID),
+      onAiBusy: (message) => send(message.chat.id,
+        "Your previous AI request is still processing. Please retry this message when it finishes."),
+    }
   );
+  runtime.isAiBusy = processor.isAiBusy;
 
   console.log("Horus Telegram command bot is listening.");
   console.log("Send /pending, /today, or /week in Telegram.");
@@ -996,7 +1042,7 @@ async function main() {
   }
 }
 
-module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, handleAiSubmissionCallback, handleAiSettingCallback, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
+module.exports = { COMMANDS, activityPage, createAssignmentCache, createReportHandler, createUpdateProcessor, isAuthorizedAiMessage, handleAiSubmissionCallback, handleAiSettingCallback, handleCallbackQuery, handleMessage, initializeOffset, parseCsvLimit, registerCommands };
 
 if (require.main === module) {
   main().catch((error) => {
