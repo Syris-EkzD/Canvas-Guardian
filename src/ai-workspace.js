@@ -49,7 +49,10 @@ function setActiveAssignment(db, chatId, context) {
   const assignmentId = validId(context.assignmentId);
   db.prepare("INSERT INTO ai_working_context (chat_id, course_id, assignment_id, draft_id) " +
     "VALUES (?, ?, ?, NULL) ON CONFLICT(chat_id) DO UPDATE SET " +
-    "course_id = excluded.course_id, assignment_id = excluded.assignment_id, draft_id = NULL")
+    "course_id = excluded.course_id, assignment_id = excluded.assignment_id, " +
+    "draft_id = CASE WHEN ai_working_context.course_id = excluded.course_id " +
+    "AND ai_working_context.assignment_id = excluded.assignment_id " +
+    "THEN ai_working_context.draft_id ELSE NULL END")
     .run(String(chatId), courseId, assignmentId);
 }
 
