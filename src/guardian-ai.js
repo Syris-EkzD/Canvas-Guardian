@@ -81,7 +81,7 @@ const declarations = [
 ];
 
 const DRAFT_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:assignment|essay|reflection|response|paper|report|answer|work|draft|it|this)";
-const REVISION_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:draft|assignment|essay|reflection|response|paper|report|answer|work|thesis|introduction|conclusion|paragraph|section|it|this)";
+const REVISION_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:draft|assignment|essay|reflection|response|paper|report|answer|work|thesis|introduction|conclusion|paragraph|section|it|this|that)";
 const SUBMISSION_TEXT_TARGET = "(?:(?:the|this|that|my|a|an|selected)\\s+)?(?:draft|text|submission(?:\\s+preview)?|response|work|it|this|that)";
 const SUBMISSION_URL_TARGET = "(?:(?:the|this|my|a|an|selected)\\s+)?(?:url|link|website|submission\\s+url|submission\\s+link)";
 
@@ -244,6 +244,7 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
       }
       case "get_assignment": {
         const context = await getContext(validateArg(args, "course_id", 30), validateArg(args, "assignment_id", 30));
+        workspace.setActiveAssignment(db, chatId, context);
         return { ...context, description: context.description?.slice(0, 7000), rubric: context.rubric?.slice(0, 20) };
       }
       case "get_announcements": return { announcements: (await getAnnouncements()).slice(0, 10).map(item => ({
@@ -262,7 +263,13 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
         return { status: "AWAITING_TELEGRAM_CONFIRMATION", setting: "calendar", mode: args.mode };
       }
       case "draft_assignment": {
-        const context = await getContext(validateArg(args, "course_id", 30), validateArg(args, "assignment_id", 30));
+        const current = workspace.getWorkingContext(db, chatId);
+        const refersToSelection = /\b(?:draft|write|compose|generate)\s+(?:that|this|it)\b/i.test(userRequest);
+        const courseId = refersToSelection && current ? current.courseId : args.course_id;
+        const assignmentId = refersToSelection && current ? current.assignmentId : args.assignment_id;
+        const context = await getContext(
+          validateArg({ course_id: courseId }, "course_id", 30),
+          validateArg({ assignment_id: assignmentId }, "assignment_id", 30));
         const draft = await generate(context, { instructions: (args.instructions || "").slice(0, 3000), provider: aiProvider, model });
         const id = workspace.saveDraft(db, chatId, context, draft);
         await onDraft({ id, context, draft });
@@ -270,7 +277,10 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
           gaps: draft.gaps, preview: draft.draft.slice(0, 1500), sentFullDraftToUser: true };
       }
       case "revise_draft": {
-        const saved = workspace.getDraft(db, chatId, validateArg(args, "draft_id", 60));
+        const current = workspace.getWorkingContext(db, chatId);
+        const refersToActive = /\b(?:revise|rewrite|edit|improve|fix|adjust|shorten|lengthen|expand|rephrase|update)\s+(?:that|this|it)\b/i.test(userRequest);
+        const draftId = refersToActive && current?.draftId ? current.draftId : args.draft_id || current?.draftId;
+        const saved = workspace.getDraft(db, chatId, validateArg({ draft_id: draftId }, "draft_id", 60));
         if (!saved) throw new Error("Draft not found in this conversation");
         const context = await getContext(saved.course_id, saved.assignment_id);
         const draft = await revise(context, saved.body, validateArg(args, "feedback", 3000), { provider: aiProvider, model });
@@ -312,12 +322,18 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
       throw new Error("Message must be 1–3000 characters");
     }
     const history = loadHistory(db, chatId);
+    const current = workspace.getWorkingContext(db, chatId);
+    const workingNote = current
+      ? " Current Canvas selection: course ID " + current.courseId +
+        ", assignment ID " + current.assignmentId +
+        (current.draftId ? ". Latest saved draft ID: " + current.draftId : ". No active saved draft.")
+      : "";
     const messages = [
       ...history.map(item => ({ role: item.role === "model" ? "assistant" : "user", text: item.content })),
       { role: "user", text: message },
     ];
     for (let round = 0; round < MAX_ROUNDS; round++) {
-      const result = await aiProvider.chat({ model, system: SYSTEM, messages, tools: declarations });
+      const result = await aiProvider.chat({ model, system: SYSTEM + workingNote, messages, tools: declarations });
       if (!result || typeof result !== "object") throw new Error("Invalid AI provider response");
       const calls = result.toolCalls || [];
       if (!Array.isArray(calls)) throw new Error("Invalid AI tool calls");

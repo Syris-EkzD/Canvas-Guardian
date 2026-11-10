@@ -571,7 +571,7 @@ function isAuthorizedAiMessage(message, allowedChatId) {
       String(message.chat.id) !== String(allowedChatId) ||
       (message.from && String(message.from.id) !== String(allowedChatId)) ||
       typeof message.text !== "string" || !message.text.trim()) return false;
-  const command = message.text.trim().split(/\\s+/)[0].split("@")[0].toLowerCase();
+  const command = message.text.trim().split(/\s+/)[0].split("@")[0].toLowerCase();
   return !command.startsWith("/") || command === "/ai" || command === "/draft";
 }
 

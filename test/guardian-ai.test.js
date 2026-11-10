@@ -264,3 +264,69 @@ test("AI state-changing tools require affirmative action wording, not keyword ma
   assert.equal(stageCalls, 1);
   db.close();
 });
+
+test("two-turn draft and 'Revise that' uses the latest saved version, not model-supplied stale ID", async () => {
+  const db = new Database(":memory:");
+  const draftEvents = [], systems = [];
+  let step = 0;
+  const provider = {
+    chat: async ({ system }) => {
+      systems.push(system);
+      switch (step++) {
+        case 0: return { toolCalls: [{ name: "draft_assignment", args: { course_id: "12", assignment_id: "34" } }] };
+        case 1: return { text: "Draft saved." };
+        case 2: return { toolCalls: [{ name: "revise_draft", args: { draft_id: "outdated-id", feedback: "sound more personal" } }] };
+        default: return { text: "Revision saved." };
+      }
+    },
+    draft: async () => { throw Error("unused provider draft"); },
+  };
+  const ai = createAssistant({
+    db, chatId: 42, provider,
+    listActivities: async () => [], getAnnouncements: async () => [], getStatus: () => ({}),
+    getContext: async (courseId, assignmentId) => {
+      assert.equal(String(courseId), "12"); assert.equal(String(assignmentId), "34");
+      return context;
+    },
+    generate: async () => ({ draft: "Original response", explanation: "Valid", gaps: [] }),
+    revise: async (assignment, original, feedback) => {
+      assert.equal(original, "Original response");
+      assert.equal(feedback, "sound more personal");
+      return { draft: "Personal response", explanation: "Valid", gaps: [] };
+    },
+    onDraft: async item => draftEvents.push(item),
+  });
+  assert.equal(await ai.talk("Please draft assignment 12 34"), "Draft saved.");
+  assert.equal(draftEvents.length, 1);
+  assert.equal(workspace.getWorkingContext(db, 42).draftId, draftEvents[0].id);
+  assert.equal(await ai.talk("Revise that to sound more personal"), "Revision saved.");
+  assert.equal(draftEvents.length, 2);
+  assert.equal(workspace.getWorkingContext(db, 42).draftId, draftEvents[1].id);
+  assert.equal(workspace.getDraft(db, 42, draftEvents[1].id).body, "Personal response");
+  assert.ok(systems[2].includes(draftEvents[0].id));
+  db.close();
+});
+
+test("switching assignments clears the active draft; /forget clears only that chat", async () => {
+  const db = new Database(":memory:");
+  const ai = createAssistant({
+    db, chatId: 42, listActivities: async () => [], getAnnouncements: async () => [], getStatus: () => ({}),
+    getContext: async (courseId, assignmentId) => ({
+      ...context, courseId: String(courseId), assignmentId: String(assignmentId),
+    }),
+  });
+  await ai.execute("get_assignment", { course_id: "12", assignment_id: "34" });
+  const saved = workspace.saveDraft(db, 42, { courseId: "12", assignmentId: "34" },
+    { draft: "Previous draft", gaps: [] });
+  assert.equal(workspace.getWorkingContext(db, 42).draftId, saved);
+  await ai.execute("get_assignment", { course_id: "67", assignment_id: "89" });
+  assert.deepEqual(workspace.getWorkingContext(db, 42),
+    { courseId: "67", assignmentId: "89", draftId: null });
+  const other = workspace.saveDraft(db, 99, { courseId: "98", assignmentId: "76" },
+    { draft: "Foreign draft", gaps: [] });
+  forgetConversation(db, 42);
+  assert.equal(workspace.getWorkingContext(db, 42), null);
+  assert.equal(workspace.getDraft(db, 42, saved), null);
+  assert.equal(workspace.getWorkingContext(db, 99).draftId, other);
+  db.close();
+});

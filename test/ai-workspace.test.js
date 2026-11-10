@@ -5,7 +5,7 @@ const { MAX_DRAFT_LENGTH } = require("../src/ai-limits");
 const {
   saveDraft, getDraft, stageSubmission, getRequest, reviewSubmission, cancelSubmission,
   confirmSubmission, postCanvasSubmission, stageSettingChange, getSettingChange,
-  cancelSettingChange, confirmSettingChange, clearWorkspace,
+  cancelSettingChange, confirmSettingChange, clearWorkspace, getWorkingContext,
 } = require("../src/ai-workspace");
 
 function fixture() {
@@ -217,5 +217,19 @@ test("the shared 12,000-character limit is enforced without truncation at persis
   }, { read: countedRead }), /12,000-character draft limit/);
   assert.equal(reads, readsAtBoundary);
   assert.equal(assignment.id, 34);
+  db.close();
+});
+
+test("saved versions keep only the latest active pointer per chat", () => {
+  const db = new Database(":memory:");
+  const original = saveDraft(db, 42, { courseId: 12, assignmentId: 34 }, { draft: "first" });
+  const newest = saveDraft(db, 42, { courseId: 12, assignmentId: 34 }, { draft: "second" });
+  const foreign = saveDraft(db, 99, { courseId: 78, assignmentId: 90 }, { draft: "foreign" });
+  assert.equal(getWorkingContext(db, 42).draftId, newest);
+  assert.equal(getWorkingContext(db, 99).draftId, foreign);
+  assert.equal(getDraft(db, 42, original).body, "first");
+  clearWorkspace(db, 42);
+  assert.equal(getWorkingContext(db, 42), null);
+  assert.equal(getWorkingContext(db, 99).draftId, foreign);
   db.close();
 });

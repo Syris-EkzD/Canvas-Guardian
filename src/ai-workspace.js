@@ -18,7 +18,10 @@ function ensureTables(db) {
     "CREATE TABLE IF NOT EXISTS ai_setting_confirmations (" +
       "id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, setting TEXT NOT NULL, " +
       "value TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, " +
-      "expires_at INTEGER NOT NULL);"
+      "expires_at INTEGER NOT NULL);" +
+    "CREATE TABLE IF NOT EXISTS ai_working_context (" +
+      "chat_id TEXT PRIMARY KEY, course_id TEXT NOT NULL, " +
+      "assignment_id TEXT NOT NULL, draft_id TEXT);"
   );
 }
 
@@ -26,6 +29,23 @@ function validId(value) {
   const id = String(value);
   if (!/^[1-9][0-9]*$/.test(id)) throw new Error("Invalid Canvas assignment ID");
   return id;
+}
+
+function getWorkingContext(db, chatId) {
+  ensureTables(db);
+  const row = db.prepare("SELECT course_id, assignment_id, draft_id FROM ai_working_context WHERE chat_id = ?")
+    .get(String(chatId));
+  return row ? { courseId: row.course_id, assignmentId: row.assignment_id, draftId: row.draft_id } : null;
+}
+
+function setActiveAssignment(db, chatId, context) {
+  ensureTables(db);
+  const courseId = validId(context.courseId);
+  const assignmentId = validId(context.assignmentId);
+  db.prepare("INSERT INTO ai_working_context (chat_id, course_id, assignment_id, draft_id) " +
+    "VALUES (?, ?, ?, NULL) ON CONFLICT(chat_id) DO UPDATE SET " +
+    "course_id = excluded.course_id, assignment_id = excluded.assignment_id, draft_id = NULL")
+    .run(String(chatId), courseId, assignmentId);
 }
 
 function saveDraft(db, chatId, context, draft) {
@@ -37,14 +57,22 @@ function saveDraft(db, chatId, context, draft) {
     throw new Error(`Draft exceeds the ${MAX_DRAFT_LENGTH.toLocaleString("en-US")}-character limit`);
   }
   const id = randomUUID();
-  db.prepare("INSERT INTO ai_drafts VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
-    id, String(chatId), validId(context.courseId), validId(context.assignmentId),
-    draft.draft, draft.explanation || "", JSON.stringify(draft.gaps || []), Date.now()
-  );
-  db.prepare("DELETE FROM ai_drafts WHERE chat_id = ? AND id NOT IN (" +
-    "SELECT id FROM ai_drafts WHERE chat_id = ? ORDER BY created_at DESC LIMIT 10)").run(
-    String(chatId), String(chatId)
-  );
+  const courseId = validId(context.courseId);
+  const assignmentId = validId(context.assignmentId);
+  db.transaction(() => {
+    db.prepare("INSERT INTO ai_drafts VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+      id, String(chatId), courseId, assignmentId,
+      draft.draft, draft.explanation || "", JSON.stringify(draft.gaps || []), Date.now()
+    );
+    db.prepare("DELETE FROM ai_drafts WHERE chat_id = ? AND id NOT IN (" +
+      "SELECT id FROM ai_drafts WHERE chat_id = ? ORDER BY created_at DESC LIMIT 10)").run(
+      String(chatId), String(chatId)
+    );
+    db.prepare("INSERT INTO ai_working_context (chat_id, course_id, assignment_id, draft_id) " +
+      "VALUES (?, ?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET " +
+      "course_id = excluded.course_id, assignment_id = excluded.assignment_id, draft_id = excluded.draft_id")
+      .run(String(chatId), courseId, assignmentId, id);
+  })();
   return id;
 }
 
@@ -285,6 +313,7 @@ async function confirmSettingChange(db, chatId, id, {
 function clearWorkspace(db, chatId) {
   ensureTables(db);
   db.prepare("UPDATE ai_setting_confirmations SET status = 'cancelled' WHERE chat_id = ? AND status = 'pending'").run(String(chatId));
+  db.prepare("DELETE FROM ai_working_context WHERE chat_id = ?").run(String(chatId));
   db.prepare("DELETE FROM ai_drafts WHERE chat_id = ?").run(String(chatId));
   db.prepare("DELETE FROM ai_submissions WHERE chat_id = ? AND status IN ('staged', 'reviewed', 'cancelled', 'submitted')").run(String(chatId));
   // Retain only outcome markers for ambiguous or in-flight writes.
@@ -296,4 +325,5 @@ module.exports = {
   cancelSubmission, confirmSubmission, clearWorkspace, validateUrl, validateAssignment,
   postCanvasSubmission,
   stageSettingChange, getSettingChange, cancelSettingChange, confirmSettingChange,
+  getWorkingContext, setActiveAssignment,
 };
