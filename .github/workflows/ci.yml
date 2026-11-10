@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run focused AI and Telegram regressions
+        run: node --test test/telegram-ai-polling.test.js test/telegram-ai-integration.test.js test/guardian-ai.test.js test/ai-workspace.test.js test/ai-provider.test.js
+
       - name: Run tests
         run: npm test
 
