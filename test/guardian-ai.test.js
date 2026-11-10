@@ -330,3 +330,65 @@ test("switching assignments clears the active draft; /forget clears only that ch
   assert.equal(workspace.getWorkingContext(db, 99).draftId, other);
   db.close();
 });
+
+test("draft, inspect the same assignment rubric, then revise that saved draft", async () => {
+  const db = new Database(":memory:");
+  const versions = [];
+  let step = 0;
+  const provider = {
+    chat: async ({ messages, system }) => {
+      switch (step++) {
+        case 0:
+          return { toolCalls: [{ name: "draft_assignment", args: { course_id: "12", assignment_id: "34" } }] };
+        case 1:
+          return { text: "Draft A is ready." };
+        case 2:
+          assert.match(system, new RegExp(versions[0].id));
+          return { toolCalls: [{ name: "get_assignment", args: { course_id: "12", assignment_id: "34" } }] };
+        case 3:
+          assert.equal(messages.at(-1).toolResults[0].result.rubric[0].description, "Personal reflection");
+          assert.equal(workspace.getWorkingContext(db, 42).draftId, versions[0].id);
+          return { text: "The rubric asks for a personal reflection." };
+        case 4:
+          return { toolCalls: [{
+            name: "revise_draft", args: { draft_id: "stale-model-id", feedback: "sound more personal" },
+          }] };
+        default:
+          return { text: "Draft B is ready." };
+      }
+    },
+    draft: async () => { throw new Error("Unused draft adapter"); },
+  };
+  const ai = createAssistant({
+    db, chatId: 42, provider,
+    listActivities: async () => [], getAnnouncements: async () => [], getStatus: () => ({}),
+    getContext: async (courseId, assignmentId) => {
+      assert.equal(String(courseId), "12");
+      assert.equal(String(assignmentId), "34");
+      return { ...context, rubric: [{ description: "Personal reflection" }] };
+    },
+    generate: async () => ({ draft: "Neutral draft A", explanation: "OK", gaps: [] }),
+    revise: async (ctx, original, feedback) => {
+      assert.equal(original, "Neutral draft A");
+      assert.equal(feedback, "sound more personal");
+      return { draft: "Personal draft B", explanation: "OK", gaps: [] };
+    },
+    onDraft: async item => versions.push(item),
+  });
+
+  assert.equal(await ai.talk("Please draft my reflection"), "Draft A is ready.");
+  const firstId = versions[0].id;
+  assert.equal(workspace.getWorkingContext(db, 42).draftId, firstId);
+  assert.equal(await ai.talk("Remind me of that assignment's rubric"),
+    "The rubric asks for a personal reflection.");
+  assert.equal(workspace.getWorkingContext(db, 42).draftId, firstId);
+  assert.equal(await ai.talk("Revise that draft to sound more personal"), "Draft B is ready.");
+  assert.equal(versions.length, 2);
+  assert.equal(workspace.getDraft(db, 42, firstId).body, "Neutral draft A");
+  assert.equal(workspace.getDraft(db, 42, versions[1].id).body, "Personal draft B");
+  assert.equal(workspace.getWorkingContext(db, 42).draftId, versions[1].id);
+  forgetConversation(db, 42);
+  assert.equal(workspace.getWorkingContext(db, 42), null);
+  assert.equal(workspace.getDraft(db, 42, versions[1].id), null);
+  db.close();
+});

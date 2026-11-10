@@ -5,7 +5,7 @@ const { MAX_DRAFT_LENGTH } = require("../src/ai-limits");
 const {
   saveDraft, getDraft, stageSubmission, getRequest, reviewSubmission, cancelSubmission,
   confirmSubmission, postCanvasSubmission, stageSettingChange, getSettingChange,
-  cancelSettingChange, confirmSettingChange, clearWorkspace, getWorkingContext,
+  cancelSettingChange, confirmSettingChange, clearWorkspace, getWorkingContext, setActiveAssignment,
 } = require("../src/ai-workspace");
 
 function fixture() {
@@ -292,5 +292,38 @@ test("old SQLite submission rows gain destination metadata column without data l
   const original = getRequest(db, 42, "old-preview");
   assert.equal(original.payload, "Unchanged");
   assert.equal(original.destination_json, null);
+  db.close();
+});
+
+test("same assignment retains the saved draft; different IDs clear it without crossing chats", () => {
+  const db = new Database(":memory:");
+  assert.equal(getWorkingContext(db, 42), null);
+  setActiveAssignment(db, 42, { courseId: 12, assignmentId: 34 });
+  assert.deepEqual(getWorkingContext(db, 42),
+    { courseId: "12", assignmentId: "34", draftId: null });
+
+  const first = saveDraft(db, 42, { courseId: 12, assignmentId: 34 }, { draft: "Version A" });
+  assert.equal(getWorkingContext(db, 42).draftId, first);
+  setActiveAssignment(db, 42, { courseId: "12", assignmentId: "34" });
+  assert.equal(getWorkingContext(db, 42).draftId, first);
+
+  const foreign = saveDraft(db, 99, { courseId: 12, assignmentId: 34 }, { draft: "Foreign" });
+  setActiveAssignment(db, 42, { courseId: 12, assignmentId: 35 });
+  assert.deepEqual(getWorkingContext(db, 42),
+    { courseId: "12", assignmentId: "35", draftId: null });
+  assert.equal(getWorkingContext(db, 99).draftId, foreign);
+
+  setActiveAssignment(db, 42, { courseId: 12, assignmentId: 34 });
+  assert.equal(getWorkingContext(db, 42).draftId, null);
+  const newest = saveDraft(db, 42, { courseId: 12, assignmentId: 34 }, { draft: "Version B" });
+  assert.equal(getWorkingContext(db, 42).draftId, newest);
+  setActiveAssignment(db, 42, { courseId: 56, assignmentId: 34 });
+  assert.deepEqual(getWorkingContext(db, 42),
+    { courseId: "56", assignmentId: "34", draftId: null });
+  assert.equal(getDraft(db, 42, first).body, "Version A");
+
+  clearWorkspace(db, 42);
+  assert.equal(getWorkingContext(db, 42), null);
+  assert.equal(getWorkingContext(db, 99).draftId, foreign);
   db.close();
 });
