@@ -306,7 +306,15 @@ function activityDetail(db, assignment) {
 async function sendLongText(send, chatId, text, finalMarkup) {
   const content = String(text || "");
   const chunks = [];
-  for (let i = 0; i < content.length; i += 3500) chunks.push(content.slice(i, i + 3500));
+  for (let i = 0; i < content.length;) {
+    let end = Math.min(i + 3500, content.length);
+    // Keep UTF-16 surrogate pairs together so no emoji is altered at a boundary.
+    if (end < content.length &&
+        /[\uD800-\uDBFF]/.test(content[end - 1]) &&
+        /[\uDC00-\uDFFF]/.test(content[end])) end -= 1;
+    chunks.push(content.slice(i, end));
+    i = end;
+  }
   if (!chunks.length) chunks.push("(empty)");
   for (let i = 0; i < chunks.length; i++) {
     await send(chatId, chunks[i], i === chunks.length - 1 ? finalMarkup : undefined);
@@ -330,7 +338,7 @@ function formatSubmissionGaps(preview) {
 }
 
 async function sendAiSubmissionPreview(send, chatId, preview) {
-  await send(chatId,
+  await sendLongText(send, chatId,
     "📤 PREPARED — NOT SUBMITTED\n" +
     formatSubmissionDestination(preview) + "\n" +
     "Content: " + preview.contentLength + " characters\n" +
@@ -357,15 +365,21 @@ async function handleAiSubmissionCallback(query, runtime) {
         "Preview was already used or is unavailable.");
     } else if (action === "r") {
       const detail = aiWorkspace.reviewSubmission(runtime.db, chatId, id);
-      await send(chatId, "FULL SUBMISSION REVIEW\n" +
-        formatSubmissionDestination(detail) +
-        "\nIdentified gaps: " + formatSubmissionGaps(detail) +
-        "\nRecommendation: " + detail.recommendation +
-        "\n\nRead the complete content below. Confirm only if you want EXACTLY this version sent to Canvas.");
-      await sendLongText(send, chatId, detail.payload, { inline_keyboard: [
-        [{ text: "✅ Confirm Canvas submission", callback_data: "ai:c:" + id }],
-        [{ text: "❌ Cancel", callback_data: "ai:x:" + id }],
-      ] });
+      try {
+        await sendLongText(send, chatId, "FULL SUBMISSION REVIEW\n" +
+          formatSubmissionDestination(detail) +
+          "\nIdentified gaps: " + formatSubmissionGaps(detail) +
+          "\nRecommendation: " + detail.recommendation +
+          "\n\nRead the complete content below. Confirm only if you want EXACTLY this version sent to Canvas.");
+        await sendLongText(send, chatId, detail.payload, { inline_keyboard: [
+          [{ text: "✅ Confirm Canvas submission", callback_data: "ai:c:" + id }],
+          [{ text: "❌ Cancel", callback_data: "ai:x:" + id }],
+        ] });
+      } catch {
+        // The full review was not delivered: do not leave a confirmable approval.
+        aiWorkspace.cancelSubmission(runtime.db, chatId, id);
+        throw new Error("Submission review delivery failed; preview cancelled. Prepare it again.");
+      }
     } else if (action === "c") {
       const result = await aiWorkspace.confirmSubmission(runtime.db, chatId, id);
       await send(chatId, "✅ Canvas confirmed the submission.\nType: " +
