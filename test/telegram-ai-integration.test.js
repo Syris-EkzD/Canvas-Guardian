@@ -156,7 +156,7 @@ test("long review metadata is delivered without truncation or early approval but
     payload, gaps, advice: "Verify the entire submitted text.",
   }, { read: async () => ({
     id: 34, course_id: 12, name: "Practice Essay", course_name: "History",
-    published: true, submission_types: ["online_text_entry"],
+    published: true, can_submit: true, submission_types: ["online_text_entry"],
     submission: { workflow_state: "unsubmitted" },
   }) });
 
@@ -210,7 +210,7 @@ test("failed review metadata or final confirmation delivery cancels the approval
       courseId: "12", assignmentId: "34", submissionType: "online_text_entry",
       payload: "Checked payload " + "x".repeat(7000), gaps: ["Check evidence"],
     }, { read: async () => ({
-      id: 34, course_id: 12, name: "Practice Essay", published: true,
+      id: 34, course_id: 12, name: "Practice Essay", published: true, can_submit: true,
       submission_types: ["online_text_entry"],
       submission: { workflow_state: "unsubmitted" },
     }) });
