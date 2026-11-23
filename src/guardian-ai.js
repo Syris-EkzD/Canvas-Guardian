@@ -248,7 +248,7 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
         return { ...context, description: context.description?.slice(0, 7000), rubric: context.rubric?.slice(0, 20) };
       }
       case "get_announcements": return { announcements: (await getAnnouncements()).slice(0, 10).map(item => ({
-        title: item.title, course: item.courseName, postedAt: item.posted_at,
+        title: item.title, courseName: item.courseName, postedAt: item.posted_at,
         message: String(item.message || "").replace(/<[^>]*>/g, " ").slice(0, 700),
       })) };
       case "get_guardian_status": return getStatus();
@@ -277,11 +277,8 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
           gaps: draft.gaps, preview: draft.draft.slice(0, 1500), sentFullDraftToUser: true };
       }
       case "revise_draft": {
-        const current = workspace.getWorkingContext(db, chatId);
-        const refersToActive = /\b(?:revise|rewrite|edit|improve|fix|adjust|shorten|lengthen|expand|rephrase|update)\s+(?:that|this|it)\b/i.test(userRequest);
-        const draftId = refersToActive && current?.draftId ? current.draftId : args.draft_id || current?.draftId;
-        const saved = workspace.getDraft(db, chatId, validateArg({ draft_id: draftId }, "draft_id", 60));
-        if (!saved) throw new Error("Draft not found in this conversation");
+        const draftId = validateArg(args, "draft_id", 60);
+        const saved = workspace.getActiveDraft(db, chatId, draftId);
         const context = await getContext(saved.course_id, saved.assignment_id);
         const draft = await revise(context, saved.body, validateArg(args, "feedback", 3000), { provider: aiProvider, model });
         const id = workspace.saveDraft(db, chatId, context, draft);
@@ -290,8 +287,7 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
           gaps: draft.gaps, preview: draft.draft.slice(0, 1500), sentFullDraftToUser: true };
       }
       case "prepare_text_submission": {
-        const saved = workspace.getDraft(db, chatId, validateArg(args, "draft_id", 60));
-        if (!saved) throw new Error("Draft not found");
+        const saved = workspace.getActiveDraft(db, chatId, validateArg(args, "draft_id", 60));
         const gaps = JSON.parse(saved.gaps_json);
         const advice = gaps.length ? "Revise before submitting: " + gaps.join("; ").slice(0, 430)
           : "Review accuracy, originality, citations and assignment requirements before submitting.";
