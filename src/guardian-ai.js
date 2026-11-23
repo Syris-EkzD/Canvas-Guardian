@@ -248,8 +248,8 @@ function createAssistant({ db, chatId, client, listActivities, getAnnouncements,
         return { ...context, description: context.description?.slice(0, 7000), rubric: context.rubric?.slice(0, 20) };
       }
       case "get_announcements": return { announcements: (await getAnnouncements()).slice(0, 10).map(item => ({
-        title: item.title, courseName: item.courseName, postedAt: item.posted_at,
-        message: String(item.message || "").replace(/<[^>]*>/g, " ").slice(0, 700),
+        title: item?.title ?? "", courseName: item?.course ?? "", postedAt: item?.postedAt ?? null,
+        message: String(item?.preview ?? "").replace(/<[^>]*>/g, " ").slice(0, 700),
       })) };
       case "get_guardian_status": return getStatus();
       case "set_monitoring_mode": {
