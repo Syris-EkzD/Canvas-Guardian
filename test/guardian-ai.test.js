@@ -54,6 +54,32 @@ test("Gemini tool calling uses authorized structured data and keeps bounded hist
   db.close();
 });
 
+test("announcement adapter maps realistic Canvas fields for Gemini", async () => {
+  const db = new Database(":memory:");
+  const ai = createAssistant({
+    db, chatId: 42,
+    listActivities: async () => [],
+    getAnnouncements: async () => [{
+      id: 501,
+      title: "Lab rubric and preparation",
+      courseName: "IT 303 — Data Warehousing",
+      posted_at: "2026-11-22T08:30:00Z",
+      message: "<p>Review the <strong>rubric</strong> before the lab.</p>",
+    }],
+    getStatus: () => ({}),
+  });
+
+  const result = await ai.execute("get_announcements");
+  assert.equal(result.announcements.length, 1);
+  assert.deepEqual(result.announcements[0], {
+    title: "Lab rubric and preparation",
+    courseName: "IT 303 — Data Warehousing",
+    postedAt: "2026-11-22T08:30:00Z",
+    message: " Review the  rubric  before the lab. ",
+  });
+  db.close();
+});
+
 test("affirmative preparation request accepts a demonstrative target", async () => {
   const { db } = fixture();
   const draftId = workspace.saveDraft(db, 42, context, {
@@ -275,7 +301,9 @@ test("two-turn draft and 'Revise that' uses the latest saved version, not model-
       switch (step++) {
         case 0: return { toolCalls: [{ name: "draft_assignment", args: { course_id: "12", assignment_id: "34" } }] };
         case 1: return { text: "Draft saved." };
-        case 2: return { toolCalls: [{ name: "revise_draft", args: { draft_id: "outdated-id", feedback: "sound more personal" } }] };
+        case 2: return { toolCalls: [{
+          name: "revise_draft", args: { draft_id: draftEvents.at(-1).id, feedback: "sound more personal" },
+        }] };
         default: return { text: "Revision saved." };
       }
     },
@@ -331,6 +359,64 @@ test("switching assignments clears the active draft; /forget clears only that ch
   db.close();
 });
 
+test("revision and text preparation reject stale or assignment-mismatched draft IDs", async () => {
+  const db = new Database(":memory:");
+  let reviseCalls = 0;
+  let stageCalls = 0;
+  const ai = createAssistant({
+    db, chatId: 42,
+    listActivities: async () => [],
+    getAnnouncements: async () => [],
+    getStatus: () => ({}),
+    getContext: async (courseId, assignmentId) => ({
+      ...context, courseId: String(courseId), assignmentId: String(assignmentId),
+    }),
+    revise: async () => {
+      reviseCalls += 1;
+      return { draft: "Should not be reached", explanation: "", gaps: [] };
+    },
+    stage: async () => {
+      stageCalls += 1;
+      return { id: "unexpected-preview" };
+    },
+  });
+
+  const rejectBothTools = async draftId => {
+    await assert.rejects(ai.execute("revise_draft", {
+      draft_id: draftId, feedback: "make the thesis clearer",
+    }, "Please revise the draft"), /stale or does not match the active assignment and version/);
+    await assert.rejects(ai.execute("prepare_text_submission", {
+      draft_id: draftId,
+    }, "Prepare that draft for submission review"),
+    /stale or does not match the active assignment and version/);
+  };
+
+  await ai.execute("get_assignment", { course_id: "12", assignment_id: "34" });
+  const firstVersion = workspace.saveDraft(db, 42, context, {
+    draft: "Version A", explanation: "", gaps: [],
+  });
+  const latestVersion = workspace.saveDraft(db, 42, context, {
+    draft: "Version B", explanation: "", gaps: [],
+  });
+  assert.notEqual(firstVersion, latestVersion);
+  assert.equal(workspace.getWorkingContext(db, 42).draftId, latestVersion);
+  await rejectBothTools(firstVersion);
+
+  await ai.execute("get_assignment", { course_id: "56", assignment_id: "78" });
+  assert.equal(workspace.getWorkingContext(db, 42).draftId, null);
+  await rejectBothTools(latestVersion);
+
+  const otherAssignmentDraft = workspace.saveDraft(db, 42, {
+    courseId: "56", assignmentId: "78",
+  }, { draft: "Assignment B draft", explanation: "", gaps: [] });
+  assert.equal(workspace.getWorkingContext(db, 42).draftId, otherAssignmentDraft);
+  await rejectBothTools(latestVersion);
+
+  assert.equal(reviseCalls, 0);
+  assert.equal(stageCalls, 0);
+  db.close();
+});
+
 test("draft, inspect the same assignment rubric, then revise that saved draft", async () => {
   const db = new Database(":memory:");
   const versions = [];
@@ -351,7 +437,7 @@ test("draft, inspect the same assignment rubric, then revise that saved draft", 
           return { text: "The rubric asks for a personal reflection." };
         case 4:
           return { toolCalls: [{
-            name: "revise_draft", args: { draft_id: "stale-model-id", feedback: "sound more personal" },
+            name: "revise_draft", args: { draft_id: versions[0].id, feedback: "sound more personal" },
           }] };
         default:
           return { text: "Draft B is ready." };
