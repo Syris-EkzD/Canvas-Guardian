@@ -281,10 +281,12 @@ test("AI state-changing tools require affirmative action wording, not keyword ma
     "Could you draft assignment 12 34?");
   assert.equal(generated.sentFullDraftToUser, true);
   assert.equal(draftCalls, 1);
-  await ai.execute("revise_draft", { draft_id: savedDraftId, feedback: "improve the thesis" },
+  const activeDraftId = workspace.getWorkingContext(db, 42).draftId;
+  await ai.execute("revise_draft", { draft_id: activeDraftId, feedback: "improve the thesis" },
     "Please revise the draft");
   assert.equal(revisionCalls, 1);
-  const prepared = await ai.execute("prepare_text_submission", { draft_id: savedDraftId },
+  const revisedDraftId = workspace.getWorkingContext(db, 42).draftId;
+  const prepared = await ai.execute("prepare_text_submission", { draft_id: revisedDraftId },
     "Prepare the draft for submission review");
   assert.equal(prepared.status, "AWAITING_USER_REVIEW");
   assert.equal(stageCalls, 1);
