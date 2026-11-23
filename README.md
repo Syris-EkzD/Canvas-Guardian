@@ -70,7 +70,7 @@ detailed academic pipeline flow is documented in
 | `/report` | Explain how to upload one Roll Call CSV for an Excel report |
 | `/ai <request>` | Ask Gemini a natural-language question about Guardian data |
 | `/draft <course ID> <assignment ID>` | Generate a draft for one selected Canvas assignment |
-| `/forget` | Clear this chat's local AI conversation history and saved drafts |
+| `/forget` | Clear this chat's local AI history/drafts and invalidate pending approvals |
 | `/help` | Show all available commands |
 
 Pending, Week, and Saved activity lists show five items per page; Today
