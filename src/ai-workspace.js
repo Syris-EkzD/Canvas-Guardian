@@ -89,6 +89,25 @@ function getDraft(db, chatId, id) {
   return db.prepare("SELECT * FROM ai_drafts WHERE id = ? AND chat_id = ?").get(id, String(chatId)) || null;
 }
 
+function getActiveDraft(db, chatId, draftId) {
+  ensureTables(db);
+  if (typeof draftId !== "string" || !draftId) {
+    throw new Error("Draft reference is stale or does not match the active assignment and version");
+  }
+  const saved = db.prepare(
+    "SELECT draft.* FROM ai_working_context AS active " +
+    "INNER JOIN ai_drafts AS draft ON draft.id = active.draft_id " +
+    "AND draft.chat_id = active.chat_id " +
+    "AND draft.course_id = active.course_id " +
+    "AND draft.assignment_id = active.assignment_id " +
+    "WHERE active.chat_id = ? AND active.draft_id = ?"
+  ).get(String(chatId), draftId);
+  if (!saved) {
+    throw new Error("Draft reference is stale or does not match the active assignment and version");
+  }
+  return saved;
+}
+
 function validateUrl(value) {
   if (typeof value !== "string" || value.length > 2000) throw new Error("Invalid submission URL");
   let url;
@@ -107,6 +126,9 @@ function validateAssignment(raw, courseId, assignmentId, submissionType) {
       (raw.course_id != null && String(raw.course_id) !== courseId)) {
     throw new Error("Canvas returned a different assignment");
   }
+  if (raw.can_submit !== true) {
+    throw new Error("Canvas does not confirm that this assignment can be submitted");
+  }
   if (!raw.published || raw.locked_for_user || (raw.lock_at && Date.parse(raw.lock_at) <= Date.now())) {
     throw new Error("Assignment is unpublished or locked");
   }
@@ -122,7 +144,8 @@ function validateAssignment(raw, courseId, assignmentId, submissionType) {
 
 async function readAssignment(courseId, assignmentId, read = canvasGet) {
   return read(
-    "/api/v1/courses/" + courseId + "/assignments/" + assignmentId + "?include[]=submission"
+    "/api/v1/courses/" + courseId + "/assignments/" + assignmentId +
+      "?include[]=can_submit&include[]=submission"
   );
 }
 
@@ -364,5 +387,5 @@ module.exports = {
   cancelSubmission, confirmSubmission, clearWorkspace, validateUrl, validateAssignment,
   postCanvasSubmission,
   stageSettingChange, getSettingChange, cancelSettingChange, confirmSettingChange,
-  getWorkingContext, setActiveAssignment,
+  getWorkingContext, setActiveAssignment, getActiveDraft,
 };
