@@ -54,28 +54,59 @@ test("Gemini tool calling uses authorized structured data and keeps bounded hist
   db.close();
 });
 
-test("announcement adapter maps realistic Canvas fields for Gemini", async () => {
+test("announcement adapter maps the Telegram runtime contract for Gemini", async () => {
   const db = new Database(":memory:");
   const ai = createAssistant({
     db, chatId: 42,
     listActivities: async () => [],
     getAnnouncements: async () => [{
-      id: 501,
+      course: "IT 303 — Data Warehousing",
       title: "Lab rubric and preparation",
-      courseName: "IT 303 — Data Warehousing",
-      posted_at: "2026-11-22T08:30:00Z",
-      message: "<p>Review the <strong>rubric</strong> before the lab.</p>",
+      preview: "Review the rubric before the upcoming laboratory activity.",
+      postedAt: "2026-11-22T08:30:00Z",
+      htmlUrl: "https://canvas.example.edu/courses/303/announcements/501",
     }],
     getStatus: () => ({}),
   });
 
   const result = await ai.execute("get_announcements");
-  assert.equal(result.announcements.length, 1);
-  assert.deepEqual(result.announcements[0], {
+  assert.deepEqual(result.announcements, [{
     title: "Lab rubric and preparation",
     courseName: "IT 303 — Data Warehousing",
     postedAt: "2026-11-22T08:30:00Z",
-    message: " Review the  rubric  before the lab. ",
+    message: "Review the rubric before the upcoming laboratory activity.",
+  }]);
+  db.close();
+});
+
+test("announcement adapter sanitizes and bounds previews and tolerates missing optional fields", async () => {
+  const db = new Database(":memory:");
+  const ai = createAssistant({
+    db, chatId: 42,
+    listActivities: async () => [],
+    getAnnouncements: async () => [
+      {
+        course: "IT 303 — Data Warehousing",
+        title: "Long announcement preview",
+        preview: "<p>" + "A".repeat(750) + "</p>",
+        postedAt: "2026-11-22T08:30:00Z",
+        htmlUrl: "https://canvas.example.edu/courses/303/announcements/502",
+      },
+      {},
+    ],
+    getStatus: () => ({}),
+  });
+
+  const result = await ai.execute("get_announcements");
+  assert.equal(result.announcements.length, 2);
+  assert.equal(result.announcements[0].message.length, 700);
+  assert.equal(result.announcements[0].message.includes("<"), false);
+  assert.equal(result.announcements[0].message.includes(">"), false);
+  assert.deepEqual(result.announcements[1], {
+    title: "",
+    courseName: "",
+    postedAt: null,
+    message: "",
   });
   db.close();
 });
