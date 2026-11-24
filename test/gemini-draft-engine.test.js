@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { getAssignmentDraftContext } = require("../src/assignment-draft-context");
 const { generateAssignmentDraft, reviseAssignmentDraft } = require("../src/gemini-draft-engine");
+const { MAX_DRAFT_LENGTH } = require("../src/ai-limits");
 
 const context = {
   courseId: "12", assignmentId: "34", title: "Essay", description: "Discuss the topic",
@@ -130,4 +131,45 @@ test("real Canvas client uses GET only and never sends a token to Gemini", async
     if (originalToken === undefined) delete process.env.CANVAS_ACCESS_TOKEN;
     else process.env.CANVAS_ACCESS_TOKEN = originalToken;
   }
+});
+
+test("generation, revision input and provider output share the 12,000-character boundary", async () => {
+  assert.equal(MAX_DRAFT_LENGTH, 12000);
+  const makeProvider = draft => ({
+    chat: async () => ({ text: "unused" }),
+    draft: async () => ({
+      text: JSON.stringify({ draft, explanation: "Valid explanation", gaps: [] }),
+    }),
+  });
+
+  const exactDraft = "x".repeat(MAX_DRAFT_LENGTH);
+  const generated = await generateAssignmentDraft(context, { provider: makeProvider(exactDraft) });
+  assert.equal(generated.draft.length, MAX_DRAFT_LENGTH);
+  assert.equal(generated.draft, exactDraft);
+
+  await assert.rejects(
+    generateAssignmentDraft(context, { provider: makeProvider("x".repeat(MAX_DRAFT_LENGTH + 1)) }),
+    error => error.code === "draft_too_large" && /12,000-character limit/.test(error.message)
+  );
+
+  const revised = await reviseAssignmentDraft(context, exactDraft, "Improve clarity", {
+    provider: makeProvider("Revised draft"),
+  });
+  assert.equal(revised.draft, "Revised draft");
+
+  let providerCalls = 0;
+  const unusedProvider = {
+    chat: async () => ({ text: "unused" }),
+    draft: async () => {
+      providerCalls += 1;
+      return { text: JSON.stringify({ draft: "Should not run", explanation: "No", gaps: [] }) };
+    },
+  };
+  await assert.rejects(
+    reviseAssignmentDraft(context, "x".repeat(MAX_DRAFT_LENGTH + 1), "Improve clarity", {
+      provider: unusedProvider,
+    }),
+    error => error.code === "input_too_large" && /12,000-character limit/.test(error.message)
+  );
+  assert.equal(providerCalls, 0);
 });
