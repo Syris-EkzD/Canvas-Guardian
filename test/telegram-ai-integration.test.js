@@ -44,7 +44,7 @@ test("AI preview callbacks require chat authorization and a review before approv
     courseId: "12", assignmentId: "34", submissionType: "online_text_entry",
     payload: "Exact approved text", advice: "Read carefully",
   }, { read: async () => ({
-    id: 34, course_id: 12, published: true, name: "Essay",
+    id: 34, course_id: 12, published: true, can_submit: true, name: "Essay",
     submission_types: ["online_text_entry"], submission: { workflow_state: "unsubmitted" },
   }) });
   await handleCallbackQuery(f.callback(99, "ai:r:" + pending.id), f.runtime);
@@ -113,7 +113,7 @@ test("submission preview and full review identify Canvas destination and preserv
   }, { read: async () => ({
     id: 34, course_id: 12, name: "Essay", course_name: "History",
     html_url: "https://canvas.example.edu/courses/12/assignments/34",
-    published: true, locked_for_user: false,
+    published: true, can_submit: true, locked_for_user: false,
     submission_types: ["online_text_entry", "online_url"],
     submission: { workflow_state: "unsubmitted" },
   }) });
@@ -156,7 +156,7 @@ test("long review metadata is delivered without truncation or early approval but
     payload, gaps, advice: "Verify the entire submitted text.",
   }, { read: async () => ({
     id: 34, course_id: 12, name: "Practice Essay", course_name: "History",
-    published: true, submission_types: ["online_text_entry"],
+    published: true, can_submit: true, submission_types: ["online_text_entry"],
     submission: { workflow_state: "unsubmitted" },
   }) });
 
@@ -210,7 +210,7 @@ test("failed review metadata or final confirmation delivery cancels the approval
       courseId: "12", assignmentId: "34", submissionType: "online_text_entry",
       payload: "Checked payload " + "x".repeat(7000), gaps: ["Check evidence"],
     }, { read: async () => ({
-      id: 34, course_id: 12, name: "Practice Essay", published: true,
+      id: 34, course_id: 12, name: "Practice Essay", published: true, can_submit: true,
       submission_types: ["online_text_entry"],
       submission: { workflow_state: "unsubmitted" },
     }) });

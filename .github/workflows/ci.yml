@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - fix/v0.5.0-authorization-context
   pull_request:
     branches:
       - main
+      - feat/v0.5.0-conversational-ai
 
 jobs:
   test:

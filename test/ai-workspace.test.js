@@ -11,7 +11,7 @@ const {
 function fixture() {
   const db = new Database(":memory:");
   const assignment = {
-    id: 34, course_id: 12, name: "Essay", published: true,
+    id: 34, course_id: 12, name: "Essay", published: true, can_submit: true,
     locked_for_user: false, submission_types: ["online_text_entry", "online_url"],
     submission: { workflow_state: "unsubmitted" },
   };
@@ -86,6 +86,48 @@ test("reject unsupported types, other assignment IDs, locked and submitted work"
   assignment.submission.submitted_at = null;
   assignment.id = 99;
   await assert.rejects(stageSubmission(db, 42, input, { read }), /different assignment|invalid assignment/);
+  db.close();
+});
+
+test("Canvas can_submit must be true when staging and immediately before submission", async () => {
+  const { db, assignment } = fixture();
+  const paths = [];
+  const read = async path => {
+    paths.push(path);
+    return assignment;
+  };
+  const input = {
+    courseId: 12, assignmentId: 34, submissionType: "online_text_entry", payload: "Exact practice text",
+  };
+
+  for (const eligibility of [false, undefined]) {
+    if (eligibility === undefined) delete assignment.can_submit;
+    else assignment.can_submit = eligibility;
+    await assert.rejects(
+      stageSubmission(db, 42, input, { read }),
+      /does not confirm that this assignment can be submitted/
+    );
+  }
+
+  for (const eligibility of [false, undefined]) {
+    assignment.can_submit = true;
+    const pending = await stageSubmission(db, 42, input, { read });
+    reviewSubmission(db, 42, pending.id);
+    if (eligibility === undefined) delete assignment.can_submit;
+    else assignment.can_submit = eligibility;
+
+    let submitted = false;
+    await assert.rejects(confirmSubmission(db, 42, pending.id, {
+      read,
+      submit: async () => { submitted = true; },
+    }), /no submission was sent/);
+    assert.equal(submitted, false);
+    assert.equal(getRequest(db, 42, pending.id).status, "cancelled");
+  }
+
+  assert.equal(paths.length, 6);
+  assert.ok(paths.every(path => path.includes("include[]=can_submit")));
+  assert.ok(paths.every(path => path.includes("include[]=submission")));
   db.close();
 });
 
@@ -246,7 +288,8 @@ test("identically named Canvas assignments show distinct verified destinations a
     return {
       id: 34, course_id: courseId, name: "Essay", course_name: courseId === 12 ? "History" : "Biology",
       html_url: "https://canvas.example.edu/courses/" + courseId + "/assignments/34",
-      published: true, locked_for_user: false, submission_types: ["online_text_entry", "online_url"],
+      published: true, can_submit: true, locked_for_user: false,
+      submission_types: ["online_text_entry", "online_url"],
       submission: { workflow_state: "unsubmitted" },
     };
   };
