@@ -50,7 +50,7 @@ function clearActivityStatusOverride(db, assignmentKey) {
   `).run(assignmentKey);
 }
 
-function getEffectiveActivityStatus(db, assignment) {
+function resolveActivityStatus(assignment, readOverride = () => null) {
   if (assignment.submitted) {
     return "submitted";
   }
@@ -59,10 +59,15 @@ function getEffectiveActivityStatus(db, assignment) {
     return null;
   }
 
-  return (db && getActivityStatusOverride(db, assignment.key)?.status) || "pending";
+  return readOverride(assignment.key)?.status || "pending";
+}
+
+function getEffectiveActivityStatus(db, assignment) {
+  return resolveActivityStatus(assignment, key => db && getActivityStatusOverride(db, key));
 }
 
 module.exports = {
+  resolveActivityStatus,
   clearActivityStatusOverride,
   ensureActivityStatusTable,
   getActivityStatusOverride,

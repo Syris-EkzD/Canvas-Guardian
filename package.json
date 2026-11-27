@@ -7,6 +7,7 @@
     "guardian:activity": "node src/activity-monitor.js",
     "guardian:announcements": "node src/announcement-monitor.js",
     "guardian:deadlines": "node src/deadline-monitor.js",
+    "guardian:core-api": "node src/core-api-main.js",
     "guardian:telegram": "node src/telegram-bot.js",
     "guardian:calendar": "node src/calendar-sync.js",
     "academic:pipeline": "node src/run-academic-pipeline.js",
