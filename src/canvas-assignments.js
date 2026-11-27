@@ -53,7 +53,7 @@ function getActiveCourseAssignments(options) {
 }
 
 function getAllActiveCourseAssignments(options) {
-  return getActiveCourseAssignmentsWith(canvasGetAll, options);
+  return getActiveCourseAssignmentsWith(options?.requestAll || canvasGetAll, options);
 }
 
 // Verify one assignment directly before applying a local Guardian status change.

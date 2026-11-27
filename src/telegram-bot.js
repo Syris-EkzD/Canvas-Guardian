@@ -2,11 +2,7 @@ const path = require("path");
 const Database = require("better-sqlite3");
 const { canvasGetAll } = require("./canvas-client");
 const { getAllActiveCourseAssignments, getAssignmentByKey } = require("./canvas-assignments");
-const {
-  filterActivitiesDueToday,
-  filterActivitiesDueWithinWeek,
-  filterPendingAssignments,
-} = require("./activity-logic");
+const { selectActivities } = require("./activity-query");
 const {
   getMonitoringState,
   setMonitoringState,
@@ -18,6 +14,7 @@ const { createTelegramClient } = require("./telegram-client");
 const { createReportFromCsv } = require("./academic-pipeline");
 const {
   clearActivityStatusOverride,
+  getActivityStatusOverride,
   getEffectiveActivityStatus,
   setActivityStatusOverride,
 } = require("./activity-status");
@@ -199,12 +196,9 @@ function formatDate(dateString) {
 }
 
 function activityCandidates(assignments, db, view, now = new Date()) {
-  let items = view === "a"
-    ? assignments.filter((item) => ["dismissed", "completed_offline"].includes(getEffectiveActivityStatus(db, item)))
-    : filterPendingAssignments(assignments, db);
-  if (view === "t") items = filterActivitiesDueToday(items, now);
-  if (view === "w") items = filterActivitiesDueWithinWeek(items, now);
-  return items.sort((a, b) => (a.dueAt ? Date.parse(a.dueAt) : Infinity) - (b.dueAt ? Date.parse(b.dueAt) : Infinity));
+  return selectActivities(assignments, key => db && getActivityStatusOverride(db, key),
+    { p: "pending", t: "today", w: "week", a: "saved" }[view] || "pending", now)
+    .map(({ item }) => item);
 }
 
 function activityPage(assignments, db, view, page, now) {

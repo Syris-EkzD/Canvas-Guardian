@@ -8,6 +8,12 @@ const runtimeModules = [
   "../src/deadline-monitor",
   "../src/telegram-bot",
   "../src/calendar-sync",
+  "../src/core-api-main",
+  "../src/core-api",
+  "../src/core-auth",
+  "../src/core-read-state",
+  "../src/core-canvas",
+  "../src/activity-query",
 ];
 
 const runtimeEnvironment = [
