@@ -112,6 +112,9 @@ function createCoreCanvas({ baseUrl, token, profileId, fetchImpl = global.fetch,
           method: "GET", headers: { Authorization: "Bearer " + token, Accept: "application/json" },
           redirect: "manual", signal: request,
         });
+        if (response.url && response.url !== url || response.redirected) {
+          await response.body?.cancel().catch(() => {}); invalid();
+        }
         if (response.status >= 300 && response.status < 400) {
           await response.body?.cancel().catch(() => {}); invalid();
         }
@@ -122,9 +125,6 @@ function createCoreCanvas({ baseUrl, token, profileId, fetchImpl = global.fetch,
             throw transient("SERVICE_UNAVAILABLE", /^\d{1,5}$/.test(retry || "") ? Math.min(60, Math.max(1, Number(retry))) : undefined);
           }
           throw response.status >= 500 ? transient("UPSTREAM_FAILED") : new CoreError("UPSTREAM_FAILED");
-        }
-        if (response.url && response.url !== url || response.redirected) {
-          await response.body?.cancel().catch(() => {}); invalid();
         }
         if (!response.body) invalid();
         const reader = response.body.getReader();

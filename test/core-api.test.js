@@ -61,7 +61,7 @@ function fixture(t, candidate = true) {
   return {dir,file,statePath,registry,db,write,snapshot};
 }
 function legacySnapshot(db) {
-  const schema = db.prepare("SELECT name,type,tbl_name,sql FROM sqlite_master WHERE tbl_name NOT LIKE 'guardian_%' ORDER BY name").all();
+  const schema = db.prepare("SELECT name,type,tbl_name,sql FROM sqlite_master WHERE tbl_name NOT GLOB 'guardian_*' ORDER BY name").all();
   const rows = schema.filter(x => x.type === "table").map(({name}) => ({
     name, rows: db.prepare('SELECT * FROM "' + name.replace(/"/g,'""') + '" ORDER BY 1').all()
   }));
@@ -334,7 +334,8 @@ test("explicit migration preserves main, candidate, older ALTER variant, empty a
       } else {
         f.db.exec("CREATE TABLE unrelated (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO unrelated VALUES (1,'kept');"+
           "CREATE INDEX unrelated_value ON unrelated(value)");
-        f.db.prepare("INSERT INTO app_settings VALUES ('activity_baseline_initialized','true'),('announcement_baseline_initialized','false')").run();
+        f.db.prepare("INSERT INTO app_settings VALUES ('activity_baseline_created',?),('announcement_baseline_created',?)")
+          .run(new Date(now).toISOString(),new Date(now-1000).toISOString());
         insertOverride(f,101,"dismissed");
       }
       if (variant==="wal") {
@@ -346,8 +347,10 @@ test("explicit migration preserves main, candidate, older ALTER variant, empty a
           "('submitting','42','42','101','Worksheet','text','synthetic','advice','submitting',1,2,'{}');"+
           "INSERT INTO ai_setting_confirmations VALUES ('applying','42','monitoring','paused','applying',1,2);");
       }
+      f.db.pragma("user_version=37");
       const before=f.snapshot();
       assert.deepEqual(await migrate(f),{version:1,migrated:true});
+      assert.equal(f.db.pragma("user_version",{simple:true}),37);
       assert.deepEqual(f.snapshot(),before);
       assert.deepEqual(await migrate(f),{version:1,migrated:false});
       assert.deepEqual(f.snapshot(),before);
@@ -357,6 +360,8 @@ test("explicit migration preserves main, candidate, older ALTER variant, empty a
       try {
         assert.deepEqual(legacySnapshot(copy),before);
         assert.equal(copy.pragma("integrity_check",{simple:true}),"ok");
+        assert.equal(copy.pragma("user_version",{simple:true}),37);
+        assert.deepEqual(copy.pragma("foreign_key_check"),[]);
         assert.equal(copy.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name LIKE 'guardian_%'").get().n,0);
       } finally {copy.close();}
       assert.equal(academic(f).read().sync.generation,0);
@@ -375,8 +380,16 @@ test("migration refuses unsafe paths, unknown schema, locks, mismatched identity
   await assert.rejects(migrate(f,{fetchImpl:async()=>json({id:100})}),{code:"ACCOUNT_UNVERIFIED"});
   f.db.exec("BEGIN EXCLUSIVE");
   try {await assert.rejects(migrate(f),{code:"SERVICE_UNAVAILABLE"});} finally {f.db.exec("ROLLBACK");}
+  const unsafe=path.join(f.dir,"sidecar.db");
+  fs.writeFileSync(unsafe+"-wal","sentinel",{mode:0o600});
+  await assert.rejects(migrate(f,{backupPath:unsafe}),{code:"SERVICE_UNAVAILABLE"});
+  assert.equal(fs.existsSync(unsafe),false);
+  assert.equal(fs.readFileSync(unsafe+"-wal","utf8"),"sentinel");
   await assert.rejects(migrate(f,{beforeCommit:()=>{throw Error("injected");}}),{code:"SERVICE_UNAVAILABLE"});
   assert.equal(hasSchema(),0);assert.deepEqual(f.snapshot(),before);
+  const savedBackup=fs.readFileSync(path.join(f.dir,"backup.db"));
+  await assert.rejects(migrate(f),{code:"SERVICE_UNAVAILABLE"});
+  assert.deepEqual(fs.readFileSync(path.join(f.dir,"backup.db")),savedBackup);
   assert.deepEqual(await migrate(f,{backupPath:path.join(f.dir,"retry.db")}),{version:1,migrated:true});
   f.registry.ownerId="00000000-0000-4000-8000-000000000008";f.write();
   await assert.rejects(migrate(f),{code:"ACCOUNT_UNVERIFIED"});
@@ -406,13 +419,22 @@ function courseUpstream() {
       {id:"102",name:"Submitted",published:true,submission:{workflow_state:"submitted"}},
       {id:"103",name:"Private draft",published:false},
       {id:"104",name:"Excused",published:true,submission:{excused:true}}],"7":[]},
-    fail:0,malformed:false,profile:"99",calls:[]};
+    fail:0,malformed:false,foreign:false,partial:false,profile:"99",calls:[]};
   state.fetchImpl=async(url,options)=>{
     assert.equal(options.method,"GET");assert.equal(options.redirect,"manual");
     const u=new URL(url);assert.equal(u.origin,origin);state.calls.push(u.pathname);
     if(u.pathname.endsWith("/profile"))return json({id:state.profile});
     if(u.pathname==="/api/v1/courses")return json(state.roster);
-    if(state.fail)return new Response("private upstream evidence",{status:state.fail});
+    if(state.fail) {
+      const response=new Response("private upstream evidence",{status:state.fail});
+      if(state.foreign)Object.defineProperty(response,"url",{value:"https://foreign.example/private"});
+      return response;
+    }
+    if(state.partial) {
+      if(u.searchParams.has("page"))return new Response("failed second page",{status:500});
+      return new Response(JSON.stringify(state.rows[u.pathname.split("/")[4]]||[]),
+        {headers:{link:"<"+origin+u.pathname+"?page=2>; rel=next"}});
+    }
     if(state.malformed)return new Response("[]",{headers:{link:'<https://canvas.example.edu'+u.pathname+'?page=2>; title="; rel=next"'}});
     return json(state.rows[u.pathname.split("/")[4]]||[]);
   };
@@ -439,6 +461,9 @@ test("course reads include zero work, exact DTOs, saved/submitted, lexical pagin
   const next=await request(server,"/v1/courses?limit=1&offset=1&revision="+first.body.page.revision);
   assert.equal(next.body.items[0].courseId,"7");assert.equal(next.body.sync.state,"cached");
   assert.equal(u.calls.length,5); // startup profile + refresh profile + roster + 2 courses
+  clock.wall=now-1000;
+  assert.equal((await request(server,"/v1/courses")).body.sync.state,"stale");
+  clock.wall=now;
   const detail=await request(server,"/v1/courses/7");
   assert.equal(detail.body.course.courseName,"Zero work");
   const empty=await request(server,"/v1/courses/7/assignments");
@@ -482,7 +507,13 @@ test("atomic history, partial failures, stale/never distinction, restart, clock 
   assert.equal((await request(server,"/v1/courses/999")).status,502);
   assert.equal((await request(server,"/v1/activities")).status,502);
   u.fail=401;assert.equal((await request(server,"/v1/courses")).status,502);
-  u.fail=0;u.malformed=true;
+  u.fail=500;u.foreign=true;
+  assert.equal((await request(server,"/v1/courses")).body.error.code,"UPSTREAM_INVALID");
+  u.fail=0;u.foreign=false;u.partial=true;
+  const partial=await request(server,"/v1/courses");
+  assert.equal(partial.body.sync.state,"stale");assert.equal(partial.body.items.length,2);
+  assert.equal(academic(f).capture(),generation);
+  u.partial=false;u.malformed=true;
   assert.equal((await request(server,"/v1/courses")).body.error.code,"UPSTREAM_INVALID");
   assert.equal(academic(f).capture(),generation);
   u.malformed=false;
@@ -534,4 +565,36 @@ test("generation CAS and retention caps are atomic; unexpected archive state fai
   assert.equal(first.capture(),2);assert.equal(first.read().courses.length,2);
   f.db.prepare("UPDATE guardian_courses SET local_state='archived' WHERE course_id='42'").run();
   assert.throws(()=>first.capture(),{code:"SERVICE_UNAVAILABLE"});
+});
+
+test("retained assignment history is pageable across legacy offset boundary without widening old routes",async t=>{
+  const f=fixture(t),u=courseUpstream(),clock={wall:now,tick:0};
+  await migrate(f);
+  const store=academic(f),at=new Date(now).toISOString();
+  const courses=[{id:"42",course_code:"History"}];
+  const item=id=>({courseId:"42",id:String(id),name:"Work",published:true,submitted:false});
+  store.publish(0,{courses,items:Array.from({length:10000},(_,i)=>item(i+1))},at,at);
+  store.publish(1,{courses,items:[item(10001)]},at,at);
+  u.roster=[];
+  const app=await startCourses(t,f,u,clock),server=app.server;
+  const first=await request(server,"/v1/courses/42/assignments?limit=1");
+  assert.equal(first.status,200);assert.equal(first.body.page.total,10001);
+  const last=await request(server,"/v1/courses/42/assignments?offset=10000&revision="+first.body.page.revision);
+  assert.equal(last.status,200);assert.equal(last.body.items.length,1);assert.equal(last.body.page.nextOffset,null);
+  for(const target of ["/v1/activities?offset=10001","/v1/courses?offset=10001","/v1/courses/42/assignments?offset=100001"])
+    assert.equal((await request(server,target+"&revision="+first.body.page.revision)).status,400);
+});
+
+test("revoked device cannot receive in-flight new course read",async t=>{
+  const f=fixture(t),u=upstream();
+  let entered,release;
+  const started=new Promise(resolve=>{entered=resolve;});
+  const gate=new Promise(resolve=>{release=resolve;});
+  u.setWait(async()=>{entered();await gate;});
+  const server=await runtime(t,f,u,{tick:0});
+  const pending=request(server,"/v1/courses");
+  await started;
+  f.registry.devices[0].revokedAt=new Date(now).toISOString();f.write();release();
+  const result=await pending;
+  assert.equal(result.status,401);assert.equal(result.body.items,undefined);
 });

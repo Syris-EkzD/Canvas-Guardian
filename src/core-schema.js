@@ -135,6 +135,10 @@ function registryBinding(file, binding) {
   if (binding && JSON.stringify(actual) !== JSON.stringify(binding)) mismatch();
   return actual;
 }
+function absentFile(file) {
+  try { fs.lstatSync(file); return false; }
+  catch (error) { if (error.code === "ENOENT") return true; throw error; }
+}
 async function migrateCore({ registryFile, env = process.env, fetchImpl = global.fetch,
   expectedPath = LEGACY_PATH, backupPath, now = Date.now, beforeCommit = () => {} }) {
   const binding = registryBinding(registryFile);
@@ -151,7 +155,13 @@ async function migrateCore({ registryFile, env = process.env, fetchImpl = global
     await canvas.verify();
     registryBinding(registryFile, binding);
     if (originalVersion) {
-      db.transaction(() => { validateLegacy(db); integrity(db); verifySchema(db, binding); }).immediate();
+      db.transaction(() => {
+        registryBinding(registryFile, binding);
+        checkStatePath(binding.statePath);
+        validateLegacy(db);
+        integrity(db);
+        verifySchema(db, binding);
+      }).immediate();
       return {version: 1, migrated: false};
     }
 
@@ -159,8 +169,10 @@ async function migrateCore({ registryFile, env = process.env, fetchImpl = global
     // including committed WAL pages. Never overwrite an existing backup.
     if (typeof backupPath !== "string" || !path.isAbsolute(backupPath) ||
         path.normalize(backupPath) !== backupPath || backupPath === binding.statePath ||
+        path.relative(path.resolve(__dirname, ".."), backupPath).split(path.sep)[0] !== ".." ||
         fs.realpathSync(path.dirname(backupPath)) !== path.dirname(backupPath) ||
-        (fs.statSync(path.dirname(backupPath)).mode & 0o027) !== 0) unavailable();
+        (fs.statSync(path.dirname(backupPath)).mode & 0o027) !== 0 ||
+        ["-wal", "-shm", "-journal"].some(suffix => !absentFile(backupPath + suffix))) unavailable();
     const dataVersion = db.pragma("data_version", {simple: true});
     fs.closeSync(fs.openSync(backupPath, "wx", 0o600));
     await db.backup(backupPath);

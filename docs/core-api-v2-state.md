@@ -33,7 +33,8 @@ For a future separately authorized cutover only:
    in the trusted local environment, never as command-line token arguments.
    The command verifies the self-profile using the strict GET loader,
    validates known legacy table definitions and integrity/FKs, reserves a
-   new mode-0600 backup path (never overwrites), uses SQLite's consistent
+   new mode-0600 backup path outside the repo (never overwrites or reuses
+   existing backup sidecars), uses SQLite's consistent
    backup API including committed WAL pages, verifies the backup and rejects
    data_version drift before transactional additive migration.
 3. The migration adds guardian_schema_migrations, guardian_account,
