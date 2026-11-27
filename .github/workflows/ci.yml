@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+      - feat/core-1-activity-api
 
 jobs:
   test:
@@ -24,6 +25,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run CORE-2A focused synthetic tests
+        if: github.base_ref == 'feat/core-1-activity-api'
+        run: node --test test/core-api.test.js test/core-canvas.test.js test/activity-query.test.js test/runtime-import-safety.test.js
 
       - name: Run tests
         run: npm test

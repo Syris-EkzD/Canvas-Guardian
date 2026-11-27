@@ -28,9 +28,9 @@ const legacy = {
 const schema = {
   guardian_schema_migrations: "CREATE TABLE guardian_schema_migrations (version INTEGER PRIMARY KEY CHECK(version = 1), applied_at TEXT NOT NULL)",
   guardian_account: "CREATE TABLE guardian_account (slot INTEGER PRIMARY KEY CHECK(slot = 1), owner_id TEXT NOT NULL, account_id TEXT NOT NULL UNIQUE, canvas_origin TEXT NOT NULL, canvas_profile_id TEXT NOT NULL, state_path TEXT NOT NULL, attested_at TEXT NOT NULL, UNIQUE(canvas_origin, canvas_profile_id))",
-  guardian_sync: "CREATE TABLE guardian_sync (account_id TEXT PRIMARY KEY NOT NULL REFERENCES guardian_account(account_id), generation INTEGER NOT NULL CHECK(generation >= 0), last_success_at TEXT, last_attempt_at TEXT, last_result TEXT NOT NULL CHECK(last_result IN ('never','success','failed')), last_error_code TEXT CHECK(last_error_code IN ('UPSTREAM_FAILED','UPSTREAM_INVALID','UPSTREAM_TIMEOUT','SERVICE_UNAVAILABLE','ACCOUNT_UNVERIFIED','SNAPSHOT_UNAVAILABLE')), CHECK((generation = 0 AND last_success_at IS NULL) OR (generation > 0 AND last_success_at IS NOT NULL)), CHECK((last_result = 'never' AND last_attempt_at IS NULL AND generation = 0 AND last_error_code IS NULL) OR (last_result = 'success' AND last_attempt_at IS NOT NULL AND generation > 0 AND last_error_code IS NULL) OR (last_result = 'failed' AND last_attempt_at IS NOT NULL AND last_error_code IS NOT NULL)))",
-  guardian_courses: "CREATE TABLE guardian_courses (account_id TEXT NOT NULL REFERENCES guardian_account(account_id), course_id TEXT NOT NULL, course_name TEXT NOT NULL, local_state TEXT NOT NULL CHECK(local_state IN ('active','archived','restoring')), archived_at TEXT, state_version INTEGER NOT NULL CHECK(state_version >= 0), first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, upstream_presence TEXT NOT NULL CHECK(upstream_presence IN ('present','not_in_active_roster')), assignment_fetched_at TEXT, generation INTEGER NOT NULL CHECK(generation > 0), PRIMARY KEY(account_id, course_id))",
-  guardian_assignments: "CREATE TABLE guardian_assignments (account_id TEXT NOT NULL, course_id TEXT NOT NULL, assignment_id TEXT NOT NULL, title TEXT NOT NULL, due_at TEXT, canvas_url TEXT, published INTEGER NOT NULL CHECK(published IN (0,1)), submitted INTEGER NOT NULL CHECK(submitted IN (0,1)), excused INTEGER CHECK(excused IN (0,1)), source_order INTEGER NOT NULL CHECK(source_order >= 0), presence TEXT NOT NULL CHECK(presence IN ('present','not_in_latest_complete_course')), last_seen_at TEXT NOT NULL, generation INTEGER NOT NULL CHECK(generation > 0), PRIMARY KEY(account_id,course_id,assignment_id), FOREIGN KEY(account_id,course_id) REFERENCES guardian_courses(account_id,course_id))",
+  guardian_sync: "CREATE TABLE guardian_sync (account_id TEXT PRIMARY KEY NOT NULL REFERENCES guardian_account(account_id), generation INTEGER NOT NULL CHECK(typeof(generation) = 'integer' AND generation >= 0), last_success_at TEXT, last_attempt_at TEXT, last_result TEXT NOT NULL CHECK(last_result IN ('never','success','failed')), last_error_code TEXT CHECK(last_error_code IN ('UPSTREAM_FAILED','UPSTREAM_INVALID','UPSTREAM_TIMEOUT','SERVICE_UNAVAILABLE','ACCOUNT_UNVERIFIED','SNAPSHOT_UNAVAILABLE')), CHECK((generation = 0 AND last_success_at IS NULL) OR (generation > 0 AND last_success_at IS NOT NULL)), CHECK((last_result = 'never' AND last_attempt_at IS NULL AND generation = 0 AND last_error_code IS NULL) OR (last_result = 'success' AND last_attempt_at IS NOT NULL AND generation > 0 AND last_error_code IS NULL) OR (last_result = 'failed' AND last_attempt_at IS NOT NULL AND last_error_code IS NOT NULL)))",
+  guardian_courses: "CREATE TABLE guardian_courses (account_id TEXT NOT NULL REFERENCES guardian_account(account_id), course_id TEXT NOT NULL CHECK(length(course_id) BETWEEN 1 AND 64 AND course_id GLOB '[1-9]*' AND course_id NOT GLOB '*[^0-9]*'), course_name TEXT NOT NULL, local_state TEXT NOT NULL CHECK(local_state IN ('active','archived','restoring')), archived_at TEXT, state_version INTEGER NOT NULL CHECK(typeof(state_version) = 'integer' AND state_version >= 0), first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, upstream_presence TEXT NOT NULL CHECK(upstream_presence IN ('present','not_in_active_roster')), assignment_fetched_at TEXT, generation INTEGER NOT NULL CHECK(typeof(generation) = 'integer' AND generation > 0), PRIMARY KEY(account_id, course_id))",
+  guardian_assignments: "CREATE TABLE guardian_assignments (account_id TEXT NOT NULL, course_id TEXT NOT NULL CHECK(length(course_id) BETWEEN 1 AND 64 AND course_id GLOB '[1-9]*' AND course_id NOT GLOB '*[^0-9]*'), assignment_id TEXT NOT NULL CHECK(length(assignment_id) BETWEEN 1 AND 64 AND assignment_id GLOB '[1-9]*' AND assignment_id NOT GLOB '*[^0-9]*'), title TEXT NOT NULL, due_at TEXT, canvas_url TEXT, published INTEGER NOT NULL CHECK(published IN (0,1)), submitted INTEGER NOT NULL CHECK(submitted IN (0,1)), excused INTEGER CHECK(excused IN (0,1)), source_order INTEGER NOT NULL CHECK(typeof(source_order) = 'integer' AND source_order >= 0), presence TEXT NOT NULL CHECK(presence IN ('present','not_in_latest_complete_course')), last_seen_at TEXT NOT NULL, generation INTEGER NOT NULL CHECK(typeof(generation) = 'integer' AND generation > 0), PRIMARY KEY(account_id,course_id,assignment_id), FOREIGN KEY(account_id,course_id) REFERENCES guardian_courses(account_id,course_id))",
   guardian_assignment_order: "CREATE INDEX guardian_assignment_order ON guardian_assignments(account_id,course_id,presence,source_order)",
 };
 
@@ -41,17 +41,17 @@ function tokens(sql) {
     .map(t => t.startsWith("'") ? t : t.toLowerCase()).join(" ");
 }
 function catalog(db) {
-  return new Map(db.prepare("SELECT name, type, sql FROM sqlite_master WHERE sql IS NOT NULL").all()
+  return new Map(db.prepare("SELECT name, type, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL").all()
     .map(row => [row.name, row]));
 }
 function validateLegacy(db) {
   const entries = catalog(db);
   for (const [name, columns] of Object.entries(legacy)) {
-    const entry = entries.get(name);
+    const entry = [...entries.values()].find(row => row.name.toLowerCase() === name);
     if (!entry) continue; // Legacy entrypoints initialize their own tables lazily.
     const allowed = [columns];
     if (name === "ai_submissions") allowed.push(columns + ", destination_json TEXT");
-    if (entry.type !== "table" || !allowed.some(cols =>
+    if (entry.name !== name || entry.type !== "table" || !allowed.some(cols =>
       tokens(entry.sql) === tokens("CREATE TABLE " + name + " (" + cols + ")"))) unavailable();
   }
 }
@@ -97,7 +97,8 @@ function iso(value) {
     new Date(value).toISOString() === value;
 }
 function version(db) {
-  const found = [...catalog(db)].filter(([name]) => name.toLowerCase().startsWith("guardian_"));
+  const found = [...catalog(db)].filter(([name, entry]) =>
+    name.toLowerCase().startsWith("guardian_") || entry.tbl_name.toLowerCase().startsWith("guardian_"));
   if (!found.length) return 0;
   if (found.length !== Object.keys(schema).length) unavailable();
   for (const [name, entry] of found) {

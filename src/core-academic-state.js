@@ -13,7 +13,10 @@ function createAcademicState({ binding, registryFile, expectedPath,
     try {
       registryBinding(registryFile, binding);
       db = openState(binding, expectedPath, !write);
-      const run = db.transaction(() => work(db, verifySchema(db, binding)));
+      const run = db.transaction(() => {
+        registryBinding(registryFile, binding);
+        return work(db, verifySchema(db, binding));
+      });
       return write ? run.immediate() : run();
     } catch (error) {
       if (error instanceof CoreError) {
