@@ -81,3 +81,14 @@ test("timeout cancels real abort-aware synthetic request", async () => {
     }),{deadlineMs:20,requestMs:100}).load(),{code:"UPSTREAM_TIMEOUT"});
   } finally {clearInterval(keepAlive);}
 });
+
+test("row and byte budgets fail entire refresh; mismatched submission identity rejected", async () => {
+  const mock = rows => async url => {
+    const p = new URL(url).pathname;
+    return p===profile?json({id:99}):p===courses?json([{id:42,name:"X"}]):json(rows);
+  };
+  await assert.rejects(create(mock([row(1),row(2)]),{maxRows:1}).load(),{code:"UPSTREAM_INVALID"});
+  await assert.rejects(create(mock([row(1,{name:"x".repeat(2*1024*1024)})])).load(),{code:"UPSTREAM_INVALID"});
+  for (const submission of [{user_id:98},{assignment_id:2},{missing:"false"},{excused:"true"}])
+    await assert.rejects(create(mock([row(1,{submission})])).load(),{code:"UPSTREAM_INVALID"});
+});

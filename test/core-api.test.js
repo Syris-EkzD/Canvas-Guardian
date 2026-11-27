@@ -255,3 +255,44 @@ test("main fixture and startup account binding, complete zero, isolated service 
   assert.equal((await service.activities(query)).freshness.state,"cached");
   await service.stop();
 });
+
+test("request-target, header, body and malformed state rejection are bounded",async t=>{
+  const f=fixture(t),u=upstream(),server=await runtime(t,f,u,{tick:0});
+  assert.equal((await request(server,"/v1/activities?view="+"x".repeat(2048))).status,400);
+  const raw=options=>new Promise((resolve,reject)=>{
+    const req=http.request({host:"127.0.0.1",port:server.address().port,path:"/v1/status",...options},
+      res=>{res.resume();res.on("end",()=>resolve(res.statusCode));});
+    req.on("error",reject);req.end();
+  });
+  assert.equal(await raw({headers:{Authorization:"Bearer "+token,"X-Test":["one","two"]}}),400);
+  assert.equal(await raw({headers:{Authorization:"Bearer "+token,"X-Test":"x".repeat(8192)}}),431);
+  assert.equal(await raw({method:"GET",headers:{Authorization:"Bearer "+token,"Transfer-Encoding":"chunked"}}),400);
+  assert.equal(u.calls,1);
+  f.db.prepare("UPDATE app_settings SET value='bogus' WHERE key='monitoring_state'").run();
+  assert.equal((await request(server,"/v1/status")).body.error.code,"SERVICE_UNAVAILABLE");
+  f.db.prepare("INSERT INTO activity_status_overrides VALUES (?,?,?)").run("invalid","dismissed","not-a-date");
+  assert.equal((await request(server,"/v1/activities")).body.error.code,"SERVICE_UNAVAILABLE");
+});
+test("missing registry and absent read scope never dispatch; explicit stop aborts refresh",async t=>{
+  const f=fixture(t);
+  let entered, signalSeen;
+  const started=new Promise(resolve=>{entered=resolve;});
+  const env={GUARDIAN_CORE_REGISTRY:f.file,CANVAS_BASE_URL:origin,CANVAS_ACCESS_TOKEN:"synthetic"};
+  const app=await startCoreApi({env,now:()=>now,port:0,fetchImpl:async(url,{signal})=>{
+    if(new URL(url).pathname.endsWith("/profile"))return json({id:99});
+    signalSeen=signal;entered();
+    return new Promise((resolve,reject)=>signal.addEventListener("abort",()=>reject(signal.reason),{once:true}));
+  }});
+  let stopped=false;
+  t.after(async()=>{if(!stopped)await app.stop();});
+  fs.unlinkSync(f.file);
+  assert.equal((await request(app.server,"/v1/activities")).status,503);
+  assert.equal(signalSeen,undefined);
+  f.write();
+  const pending=request(app.server,"/v1/activities").catch(error=>error);
+  await started;
+  await app.stop();stopped=true;
+  await pending;
+  assert.equal(signalSeen.aborted,true);
+  assert.equal(app.server.listening,false);
+});
