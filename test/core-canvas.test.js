@@ -92,3 +92,75 @@ test("row and byte budgets fail entire refresh; mismatched submission identity r
   for (const submission of [{user_id:98},{assignment_id:2},{missing:"false"},{excused:"true"}])
     await assert.rejects(create(mock([row(1,{submission})])).load(),{code:"UPSTREAM_INVALID"});
 });
+
+test("pagination follows real relations despite quoted rel-like text and opaque cursors", async () => {
+  const courseNext = origin + courses + "?cursor=a,b;rel=last";
+  const assignmentNext = origin + assignments(42) + "?cursor=x%2By%3D";
+  const calls = [];
+  const canvas = create(async (url, options) => {
+    calls.push(url);
+    assert.equal(options.method, "GET");
+    const p = new URL(url).pathname;
+    if (p === profile) return json({id:99});
+    if (url === courseNext) return json([{id:43,name:"Later course"}]);
+    if (p === courses) return json([{id:42,name:"First course"}],
+      "<" + courseNext + '>; title="x; rel=last; y=z, \\"quoted\\""; REL="next last", ' +
+      "<" + origin + courses + '?page=1>; rel=first; title="; rel=next"');
+    if (url === assignmentNext) return json([row(102)]);
+    if (p === assignments(42)) return json([row(101)],
+      "<?cursor=x%2By%3D>; title=\"backslash \\\\ and comma, semicolon;\"; rel=next");
+    if (p === assignments(43)) return json([row(103)]);
+    assert.fail("unexpected request: " + url);
+  });
+  assert.deepEqual((await canvas.load()).map(x=>x.key), ["42:101","42:102","43:103"]);
+  assert.ok(calls.includes(courseNext));
+  assert.ok(calls.includes(assignmentNext));
+});
+
+test("malformed or ambiguous Link relations fail the whole snapshot before following any next URL", async () => {
+  const target = "<" + origin + courses + "?page=2>";
+  const another = "<" + origin + courses + "?page=3>";
+  const valid = target + '; rel="next"';
+  const malformed = [
+    ["missing real rel", target + '; title="x; rel=last; y=z"'],
+    ["fake rel in target", "<" + origin + courses + "?cursor=x;rel=last>; title=x"],
+    ["empty relation", target + '; rel=""'],
+    ["missing relation value", target + "; rel="],
+    ["invalid relation token", target + '; rel="next,last"'],
+    ["invalid relation syntax", target + '; rel="next=last"'],
+    ["duplicate rel parameters", valid + '; REL="last"'],
+    ["duplicate relation type", target + '; rel="next NEXT"'],
+    ["multiple actual next", valid + ", " + another + "; rel=next"],
+    ["repeated same next", valid + ", " + valid],
+    ["leading comma", ", " + valid],
+    ["trailing comma", valid + ","],
+    ["empty middle element", valid + ",, " + another + "; rel=last"],
+    ["missing comma", valid + " " + another + "; rel=last"],
+    ["missing semicolon", target + ' rel="next"'],
+    ["empty parameter", valid + ";; title=x"],
+    ["unterminated quote", target + '; rel=next; title="unterminated'],
+    ["garbage after quoted relation", target + '; rel="next"oops'],
+    ["valid next followed by malformed link", valid + ", " + another + '; title="; rel=last"'],
+  ];
+  for (const [label, header] of malformed) {
+    const calls = [];
+    await assert.rejects(create(async url => {
+      calls.push(url);
+      return new URL(url).pathname === profile ? json({id:99}) : json([{id:42,name:"First"}],header);
+    }).load(), {code:"UPSTREAM_INVALID"}, label);
+    assert.equal(calls.length, 2, label);
+  }
+});
+
+test("malformed assignment page relation cannot publish previously collected rows", async () => {
+  const calls = [];
+  await assert.rejects(create(async url => {
+    calls.push(url);
+    const u = new URL(url);
+    if (u.pathname === profile) return json({id:99});
+    if (u.pathname === courses) return json([{id:42,name:"First"}]);
+    if (!u.searchParams.has("page")) return json([row(101)], link(assignments(42)+"?page=2"));
+    return json([row(102)], "<" + origin + assignments(42) + '?page=3>; title="; rel=last"');
+  }).load(), {code:"UPSTREAM_INVALID"});
+  assert.equal(calls.length, 4);
+});

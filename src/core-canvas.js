@@ -29,26 +29,56 @@ function configuredOrigin(value) {
 }
 function nextLink(header, current, origin, pathname) {
   if (header == null) return null;
-  // Canvas emits RFC 8288 links. Commas inside a target or quoted parameter
-  // are not delimiters. Reject malformed/ambiguous links, not partial results.
-  const parts = header.match(/<(?:[^<>]*)>(?:\s*;\s*[\w-]+\s*=\s*(?:"[^"]*"|[^,;\s]+))+\s*(?:,|$)/g);
-  if (!parts || parts.join("").replace(/\s/g, "") !== header.replace(/\s/g, "")) {
-    // The common separator is comma + space.
-    if (!parts || parts.map(x => x.trim()).join("").replace(/\s/g, "") !== header.replace(/\s/g, "")) invalid();
+  // Consume the entire header in order. Only top-level parameters can
+  // establish a relation; quoted strings and URI targets are opaque here.
+  const target = /[ \t]*<([^<>"\\\s\x00-\x1f\x7f]+)>[ \t]*/y;
+  const parameter = /;[ \t]*([!#$%&'*+\-.^_\x60|~\w]+)[ \t]*=[ \t]*(?:"((?:[\t\x20\x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t\x20-\x7e\x80-\xff])*)"|([!#$%&'*+\-.^_\x60|~\w]+))[ \t]*/y;
+  let cursor = 0, next = null;
+  while (true) {
+    target.lastIndex = cursor;
+    const link = target.exec(header);
+    if (!link) invalid();
+    cursor = target.lastIndex;
+    let relations = null;
+    while (header[cursor] === ";") {
+      parameter.lastIndex = cursor;
+      const param = parameter.exec(header);
+      if (!param) invalid();
+      cursor = parameter.lastIndex;
+      if (param[1].toLowerCase() !== "rel") continue;
+      if (relations !== null) invalid();
+      const value = param[2] === undefined ? param[3] : param[2].replace(/\\(.)/g, "$1");
+      // A relation is a registered name or an absolute URI. Multiple
+      // space-separated relation types are valid, but duplicates are ambiguous.
+      relations = value.split(/ +/);
+      const seen = new Set();
+      for (const relation of relations) {
+        const registered = /^[a-z][a-z0-9.-]*$/i.test(relation);
+        if (!registered) {
+          if (!/^[a-z][a-z0-9+.-]*:[a-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/i.test(relation) ||
+              /%(?![0-9a-f]{2})/i.test(relation)) invalid();
+          try { new URL(relation); } catch { invalid(); }
+        }
+        const key = registered ? relation.toLowerCase() : relation;
+        if (seen.has(key)) invalid();
+        seen.add(key);
+      }
+      relations = seen;
+    }
+    if (relations === null) invalid();
+    if (relations.has("next")) {
+      if (next !== null) invalid();
+      let url;
+      try { url = new URL(link[1], current); } catch { invalid(); }
+      if (url.origin !== origin || url.username || url.password || url.hash || url.pathname !== pathname || url.href.length > 8192) invalid();
+      next = url.href;
+    }
+    if (cursor === header.length) return next;
+    if (header[cursor] !== ",") invalid();
+    cursor++;
+    // The next iteration requires a complete link, rejecting empty elements
+    // and trailing commas rather than silently accepting a partial list.
   }
-  let next = null;
-  for (const part of parts) {
-    const target = /^<([^<>]+)>/.exec(part.trim());
-    const rels = [...part.matchAll(/;\s*rel\s*=\s*(?:"([^"]+)"|([^,;\s]+))/gi)];
-    if (!target || rels.length !== 1) invalid();
-    if (!(rels[0][1] || rels[0][2]).split(/\s+/).includes("next")) continue;
-    if (next) invalid();
-    let url;
-    try { url = new URL(target[1], current); } catch { invalid(); }
-    if (url.origin !== origin || url.username || url.password || url.hash || url.pathname !== pathname || url.href.length > 8192) invalid();
-    next = url.href;
-  }
-  return next;
 }
 function safeCanvasUrl(value, origin, courseId, assignmentId) {
   if (typeof value !== "string") return null;
