@@ -19,6 +19,7 @@ async function startCoreApi({ env = process.env, fetchImpl = global.fetch, now =
     token: env.CANVAS_ACCESS_TOKEN, profileId: binding.canvasProfileId, fetchImpl });
   const academic = createAcademicState({binding, registryFile: file, expectedPath});
   await canvas.verify();
+  academic.capture();
   const authenticate = createCoreAuth(file, binding, now);
   const service = createActivityService({ canvas, state: academic, academic, accountId: binding.accountId, now, monotonic });
   const server = createCoreApi({ authenticate, service, monotonic });

@@ -65,7 +65,7 @@ function createAcademicState({ binding, registryFile, expectedPath,
       return next;
     }, true);
   }
-  function read({ courseId, activities = false } = {}, project = value => value) {
+  function read({ courseId, activities = false, includeAssignments = false } = {}, project = value => value) {
     return transaction((db, sync) => {
       const courses = courseId === undefined
         ? db.prepare("SELECT * FROM guardian_courses WHERE account_id=? ORDER BY course_id LIMIT 10001").all(account)
@@ -73,17 +73,17 @@ function createAcademicState({ binding, registryFile, expectedPath,
       if (courses.length > maxCourses) unavailable();
       let assignments = [];
       if (activities) {
-        assignments = db.prepare("SELECT a.* FROM guardian_assignments a JOIN guardian_courses c USING(account_id,course_id) " +
+        assignments = db.prepare("SELECT a.*,c.course_name FROM guardian_assignments a JOIN guardian_courses c USING(account_id,course_id) " +
           "WHERE a.account_id=? AND c.upstream_presence='present' AND a.presence='present' ORDER BY a.source_order LIMIT 10001").all(account);
         if (assignments.length > 10_000) unavailable();
-      } else if (courseId !== undefined) {
+      } else if (courseId !== undefined && includeAssignments) {
         const count = db.prepare("SELECT count(*) AS n FROM guardian_assignments WHERE account_id=? AND course_id=?").get(account, courseId).n;
         if (count > maxAssignments) unavailable();
         assignments = db.prepare("SELECT * FROM guardian_assignments WHERE account_id=? AND course_id=? " +
           "ORDER BY due_at IS NULL,due_at,generation DESC,source_order,assignment_id").iterate(account, courseId);
       }
       return project({sync, courses, assignments,
-        overrides: activities || courseId !== undefined ? readOverrides(db) : new Map()});
+        overrides: activities || includeAssignments ? readOverrides(db) : new Map()});
     });
   }
   transaction(db => integrity(db));
