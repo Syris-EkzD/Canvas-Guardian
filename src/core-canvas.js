@@ -113,10 +113,10 @@ function createCoreCanvas({ baseUrl, token, profileId, fetchImpl = global.fetch,
           redirect: "manual", signal: request,
         });
         if (response.status >= 300 && response.status < 400) {
-          await response.body?.cancel(); invalid();
+          await response.body?.cancel().catch(() => {}); invalid();
         }
         if (!response.ok) {
-          await response.body?.cancel();
+          await response.body?.cancel().catch(() => {});
           if (response.status === 429) {
             const retry = response.headers.get("retry-after");
             throw transient("SERVICE_UNAVAILABLE", /^\d{1,5}$/.test(retry || "") ? Math.min(60, Math.max(1, Number(retry))) : undefined);
@@ -124,7 +124,7 @@ function createCoreCanvas({ baseUrl, token, profileId, fetchImpl = global.fetch,
           throw response.status >= 500 ? transient("UPSTREAM_FAILED") : new CoreError("UPSTREAM_FAILED");
         }
         if (response.url && response.url !== url || response.redirected) {
-          await response.body?.cancel(); invalid();
+          await response.body?.cancel().catch(() => {}); invalid();
         }
         if (!response.body) invalid();
         const reader = response.body.getReader();
@@ -203,21 +203,21 @@ function createCoreCanvas({ baseUrl, token, profileId, fetchImpl = global.fetch,
     return { verify, requestAll, overall };
   }
   async function loadSnapshot(signal) {
-      const op = operation(signal);
-      try {
-        await op.verify();
-        const courses = await op.requestAll(activeCoursesPath);
-        const items = [];
-        for (const course of courses) {
-          const assignments = await op.requestAll(assignmentPath(course.id));
-          for (const assignment of assignments) items.push(normalizeAssignment(course, assignment));
-        }
-        op.overall.throwIfAborted();
-        return { courses, items };
-      } catch (error) {
-        if (op.overall.aborted) throw transient("UPSTREAM_TIMEOUT");
-        throw error;
+    const op = operation(signal);
+    try {
+      await op.verify();
+      const courses = await op.requestAll(activeCoursesPath);
+      const items = [];
+      for (const course of courses) {
+        const assignments = await op.requestAll(assignmentPath(course.id));
+        for (const assignment of assignments) items.push(normalizeAssignment(course, assignment));
       }
+      op.overall.throwIfAborted();
+      return { courses, items };
+    } catch (error) {
+      if (op.overall.aborted) throw transient("UPSTREAM_TIMEOUT");
+      throw error;
+    }
   }
   return {
     origin, profileId: expected,

@@ -13,6 +13,9 @@ const runtimeModules = [
   "../src/core-auth",
   "../src/core-read-state",
   "../src/core-canvas",
+  "../src/core-schema",
+  "../src/core-academic-state",
+  "../src/core-course-service",
   "../src/activity-query",
 ];
 
