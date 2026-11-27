@@ -164,3 +164,17 @@ test("malformed assignment page relation cannot publish previously collected row
   }).load(), {code:"UPSTREAM_INVALID"});
   assert.equal(calls.length, 4);
 });
+
+test("strict snapshot returns complete roster and zero-work courses without duplicate fetch",async()=>{
+  const calls=[];
+  const client=create(async(url,options)=>{
+    const p=new URL(url).pathname;calls.push(p);assert.equal(options.method,"GET");
+    if(p===profile)return json({id:99});
+    if(p===courses)return json([{id:"42",name:"First"},{id:"43",name:"Empty"}]);
+    return p===assignments(42)?json([row(101)]):json([]);
+  });
+  const result=await client.loadSnapshot();
+  assert.deepEqual(result.courses,[{id:"42",course_code:"First"},{id:"43",course_code:"Empty"}]);
+  assert.deepEqual(result.items.map(x=>x.key),["42:101"]);
+  assert.deepEqual(calls,[profile,courses,assignments(42),assignments(43)]);
+});

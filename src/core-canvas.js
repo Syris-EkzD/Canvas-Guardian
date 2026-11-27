@@ -1,7 +1,12 @@
-const { getAllActiveCourseAssignments } = require("./canvas-assignments");
+const { normalizeAssignment, activeCoursesPath, assignmentPath } = require("./canvas-assignments");
 const { CoreError } = require("./core-errors");
 
 const invalid = () => { throw new CoreError("UPSTREAM_INVALID"); };
+function transient(code, retryAfter) {
+  const error = new CoreError(code, retryAfter);
+  error.allowStale = true;
+  return error;
+}
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const name = value => typeof value === "string" && value.trim().length > 0 && Buffer.byteLength(value) <= 8192;
 function canonicalId(value) {
@@ -107,19 +112,19 @@ function createCoreCanvas({ baseUrl, token, profileId, fetchImpl = global.fetch,
           method: "GET", headers: { Authorization: "Bearer " + token, Accept: "application/json" },
           redirect: "manual", signal: request,
         });
+        if (response.url && response.url !== url || response.redirected) {
+          await response.body?.cancel().catch(() => {}); invalid();
+        }
         if (response.status >= 300 && response.status < 400) {
-          await response.body?.cancel(); invalid();
+          await response.body?.cancel().catch(() => {}); invalid();
         }
         if (!response.ok) {
-          await response.body?.cancel();
+          await response.body?.cancel().catch(() => {});
           if (response.status === 429) {
             const retry = response.headers.get("retry-after");
-            throw new CoreError("SERVICE_UNAVAILABLE", /^\d{1,5}$/.test(retry || "") ? Math.min(60, Math.max(1, Number(retry))) : undefined);
+            throw transient("SERVICE_UNAVAILABLE", /^\d{1,5}$/.test(retry || "") ? Math.min(60, Math.max(1, Number(retry))) : undefined);
           }
-          throw new CoreError("UPSTREAM_FAILED");
-        }
-        if (response.url && response.url !== url || response.redirected) {
-          await response.body?.cancel(); invalid();
+          throw response.status >= 500 ? transient("UPSTREAM_FAILED") : new CoreError("UPSTREAM_FAILED");
         }
         if (!response.body) invalid();
         const reader = response.body.getReader();
@@ -143,9 +148,9 @@ function createCoreCanvas({ baseUrl, token, profileId, fetchImpl = global.fetch,
         request.throwIfAborted();
         return { body, link: response.headers.get("link") };
       } catch (error) {
-        if (request.aborted) throw new CoreError("UPSTREAM_TIMEOUT");
+        if (request.aborted) throw transient("UPSTREAM_TIMEOUT");
         if (error instanceof CoreError) throw error;
-        throw new CoreError("UPSTREAM_FAILED");
+        throw transient("UPSTREAM_FAILED");
       }
     }
     async function verify() {
@@ -197,21 +202,28 @@ function createCoreCanvas({ baseUrl, token, profileId, fetchImpl = global.fetch,
     }
     return { verify, requestAll, overall };
   }
+  async function loadSnapshot(signal) {
+    const op = operation(signal);
+    try {
+      await op.verify();
+      const courses = await op.requestAll(activeCoursesPath);
+      const items = [];
+      for (const course of courses) {
+        const assignments = await op.requestAll(assignmentPath(course.id));
+        for (const assignment of assignments) items.push(normalizeAssignment(course, assignment));
+      }
+      op.overall.throwIfAborted();
+      return { courses, items };
+    } catch (error) {
+      if (op.overall.aborted) throw transient("UPSTREAM_TIMEOUT");
+      throw error;
+    }
+  }
   return {
     origin, profileId: expected,
     async verify(signal) { await operation(signal).verify(); },
-    async load(signal) {
-      const op = operation(signal);
-      try {
-        await op.verify();
-        const result = await getAllActiveCourseAssignments({ requestAll: op.requestAll });
-        op.overall.throwIfAborted();
-        return result;
-      } catch (error) {
-        if (op.overall.aborted) throw new CoreError("UPSTREAM_TIMEOUT");
-        throw error;
-      }
-    },
+    loadSnapshot,
+    async load(signal) { return (await loadSnapshot(signal)).items; },
   };
 }
 module.exports = { createCoreCanvas, canonicalId, configuredOrigin };

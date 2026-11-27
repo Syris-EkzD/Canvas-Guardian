@@ -3,6 +3,10 @@ const { canvasGet, canvasGetAll } = require("./canvas-client");
 const activeCoursesPath =
   "/api/v1/courses?enrollment_state=active&per_page=100";
 
+function assignmentPath(courseId) {
+  return `/api/v1/courses/${courseId}/assignments?include[]=submission&order_by=due_at&per_page=100`;
+}
+
 function normalizeAssignment(course, assignment) {
   const submission = assignment.submission;
 
@@ -36,7 +40,7 @@ async function getActiveCourseAssignmentsWith(canvasRequest, options) {
 
   for (const course of courses) {
     const assignments = await canvasRequest(
-      `/api/v1/courses/${course.id}/assignments?include[]=submission&order_by=due_at&per_page=100`,
+      assignmentPath(course.id),
       options
     );
 
@@ -75,6 +79,7 @@ async function getAssignmentByKey(assignment, options) {
 }
 
 module.exports = {
+  activeCoursesPath, assignmentPath, normalizeAssignment,
   getActiveCourseAssignments,
   getAllActiveCourseAssignments,
   getAssignmentByKey,

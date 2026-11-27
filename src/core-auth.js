@@ -67,12 +67,16 @@ function bindingOf(registry) {
   return { ownerId, accountId, canvasOrigin, canvasProfileId, statePath, legacyOwnershipAttested };
 }
 function createCoreAuth(file, binding, now = Date.now) {
+  let unverified = false;
   return function authenticate(header) {
     if (typeof header !== "string" || !header.startsWith("Bearer ") || !TOKEN.test(header.slice(7)))
       throw new CoreError("UNAUTHENTICATED");
+    if (unverified) throw new CoreError("ACCOUNT_UNVERIFIED");
     const registry = readRegistry(file);
-    if (JSON.stringify(bindingOf(registry)) !== JSON.stringify(binding))
+    if (JSON.stringify(bindingOf(registry)) !== JSON.stringify(binding)) {
+      unverified = true;
       throw new CoreError("ACCOUNT_UNVERIFIED");
+    }
     const digest = createHash("sha256").update(header.slice(7)).digest();
     let match;
     // Do not stop on the first comparison; digests are fixed-length.
