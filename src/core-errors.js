@@ -10,6 +10,7 @@ const errors = {
   UPSTREAM_INVALID: [502, "Invalid Canvas response"],
   UPSTREAM_FAILED: [502, "Canvas request failed"],
   SERVICE_UNAVAILABLE: [503, "Service unavailable"],
+  SNAPSHOT_UNAVAILABLE: [503, "Academic snapshot unavailable"],
   ACCOUNT_UNVERIFIED: [503, "Account not verified"],
   UPSTREAM_TIMEOUT: [504, "Canvas request timed out"],
   INTERNAL_ERROR: [500, "Internal error"],

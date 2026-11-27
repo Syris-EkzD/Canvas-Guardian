@@ -65,9 +65,11 @@ function createAcademicState({ binding, registryFile, expectedPath,
       return next;
     }, true);
   }
-  function read({ courseId, activities = false } = {}) {
+  function read({ courseId, activities = false } = {}, project = value => value) {
     return transaction((db, sync) => {
-      const courses = db.prepare("SELECT * FROM guardian_courses WHERE account_id=? ORDER BY course_id LIMIT 10001").all(account);
+      const courses = courseId === undefined
+        ? db.prepare("SELECT * FROM guardian_courses WHERE account_id=? ORDER BY course_id LIMIT 10001").all(account)
+        : db.prepare("SELECT * FROM guardian_courses WHERE account_id=? AND course_id=?").all(account, courseId);
       if (courses.length > maxCourses) unavailable();
       let assignments = [];
       if (activities) {
@@ -75,11 +77,13 @@ function createAcademicState({ binding, registryFile, expectedPath,
           "WHERE a.account_id=? AND c.upstream_presence='present' AND a.presence='present' ORDER BY a.source_order LIMIT 10001").all(account);
         if (assignments.length > 10_000) unavailable();
       } else if (courseId !== undefined) {
-        assignments = db.prepare("SELECT * FROM guardian_assignments WHERE account_id=? AND course_id=? LIMIT 100001").all(account, courseId);
-        if (assignments.length > maxAssignments) unavailable();
+        const count = db.prepare("SELECT count(*) AS n FROM guardian_assignments WHERE account_id=? AND course_id=?").get(account, courseId).n;
+        if (count > maxAssignments) unavailable();
+        assignments = db.prepare("SELECT * FROM guardian_assignments WHERE account_id=? AND course_id=? " +
+          "ORDER BY due_at IS NULL,due_at,generation DESC,source_order,assignment_id").iterate(account, courseId);
       }
-      return {sync, courses, assignments,
-        overrides: activities || courseId !== undefined ? readOverrides(db) : new Map()};
+      return project({sync, courses, assignments,
+        overrides: activities || courseId !== undefined ? readOverrides(db) : new Map()});
     });
   }
   transaction(db => integrity(db));
