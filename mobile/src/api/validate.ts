@@ -53,7 +53,7 @@ export function validatePage(result: Result, query: Query): ActivityPage {
   const f = b.freshness, p = b.page, items = b.items;
   if (!record(f) || !exact(f,['source','fetchedAt','ageSeconds','maxAgeSeconds','state']) ||
       f.source !== 'canvas' || !iso(f.fetchedAt) || Date.parse(f.fetchedAt) > Date.parse(b.evaluatedAt) ||
-      !integer(f.ageSeconds,0,60) || f.maxAgeSeconds !== 60 || !['fresh','cached'].includes(String(f.state))) return protocol();
+      !integer(f.ageSeconds,0,60) || f.maxAgeSeconds !== 60 || (f.state !== 'fresh' && f.state !== 'cached')) return protocol();
   if (!record(p) || !exact(p,['limit','offset','total','nextOffset','revision']) ||
       !integer(p.limit,1,100) || p.limit !== query.limit || !integer(p.offset,0,10000) || p.offset !== query.offset ||
       !integer(p.total,0,10000) || typeof p.revision !== 'string' || !/^[a-f0-9]{64}$/.test(p.revision) ||
@@ -66,7 +66,7 @@ export function validatePage(result: Result, query: Query): ActivityPage {
         !id(a.courseId) || !id(a.assignmentId) || a.key !== a.courseId + ':' + a.assignmentId ||
         !nonempty(a.courseName) || !nonempty(a.title) || (a.dueAt !== null && !iso(a.dueAt)) ||
         !safeUrl(a.canvasUrl,a.courseId,a.assignmentId) || a.submitted !== false ||
-        (query.view === 'saved' ? !['dismissed','completed_offline'].includes(String(a.guardianStatus)) : a.guardianStatus !== 'pending') ||
+        (query.view === 'saved' ? (a.guardianStatus !== 'dismissed' && a.guardianStatus !== 'completed_offline') : a.guardianStatus !== 'pending') ||
         keys.has(a.key as string)) return protocol();
     keys.add(a.key as string);
   }
@@ -75,7 +75,7 @@ export function validatePage(result: Result, query: Query): ActivityPage {
 export function validateStatus(result: Result): Status {
   const b = body(result);
   if (!exact(b,['accountId','timezone','monitoring','calendarSyncEnabled','scheduleConfiguredMinutes','runtimeHealth']) ||
-      b.timezone !== 'Asia/Manila' || !['running','paused','stopped'].includes(String(b.monitoring)) ||
+      b.timezone !== 'Asia/Manila' || (b.monitoring !== 'running' && b.monitoring !== 'paused' && b.monitoring !== 'stopped') ||
       typeof b.calendarSyncEnabled !== 'boolean' || b.scheduleConfiguredMinutes !== 10 || b.runtimeHealth !== 'unverified') return protocol();
   return b as unknown as Status;
 }

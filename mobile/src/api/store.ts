@@ -67,7 +67,11 @@ export function createStore(initialClient?: FixtureClient) {
       try {
         page = validatePage(await client.activities({view,limit,offset,revision}),{view,limit,offset,revision});
       } catch (error) {
-        if (!valid()) return;
+        if (!valid()) {
+          const e = asError(error);
+          if (generation === epoch && lockedCodes.includes(e.code)) lock(e);
+          return;
+        }
         if (asError(error).code !== 'VIEW_CHANGED') throw error;
         // Discard partial prefix, restart once at zero; a second failure is surfaced.
         prefix = undefined; offset = 0; revision = undefined;
@@ -87,9 +91,9 @@ export function createStore(initialClient?: FixtureClient) {
       const snapshot = {data:page,retrievedAt:Date.now()};
       put(view,{snapshot,complete:page.page.nextOffset===null?snapshot:old.complete,busy:false,stale:false});
     } catch (error) {
-      if (!valid()) return;
       const e = asError(error);
-      if (lockedCodes.includes(e.code)) { lock(e); return; }
+      if (generation === epoch && lockedCodes.includes(e.code)) { lock(e); return; }
+      if (!valid()) return;
       throttle(e);
       put(view,{snapshot:old.complete,complete:old.complete,busy:false,stale:!!old.complete,error:e});
     }

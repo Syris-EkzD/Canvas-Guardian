@@ -64,7 +64,7 @@ export function createFixtureClient(scenario: Scenario = 'normal', delay = 180):
       const data: ActivityPage = {
         accountId: scenario === 'account-mismatch' ? '00000000-0000-4000-8000-000000000002' : ACCOUNT,
         view:q.view, timezone:'Asia/Manila',evaluatedAt:CLOCK,
-        freshness:{source:'canvas',fetchedAt:'2026-11-27T10:59:50.000Z',ageSeconds:10,maxAgeSeconds:60,state:scenario === 'normal' ? 'fresh' : 'cached'},
+        freshness:{source:'canvas',fetchedAt:scenario === 'normal' ? CLOCK : '2026-11-27T10:59:50.000Z',ageSeconds:scenario === 'normal' ? 0 : 10,maxAgeSeconds:60,state:scenario === 'normal' ? 'fresh' : 'cached'},
         page:{limit:q.limit,offset:q.offset,total:all.length,nextOffset:q.offset+items.length<all.length?q.offset+items.length:null,revision},items,
       };
       return {status:200,body:data};

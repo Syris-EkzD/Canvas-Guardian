@@ -2,7 +2,7 @@
 S07 / CG-MOBILE-1-IMPLEMENT-001 (#31). Fixture-only Android UI; contract: [accepted CORE-1](https://github.com/Syris-EkzD/Canvas-Guardian/blob/729c0b849507fcd1a38e1fa4cb7605317d674035/docs/core-api-v1.md), [S05 design](https://github.com/Syris-EkzD/Canvas-Guardian/issues/29#issuecomment-7219666841). No real network, credentials, external link launch, persistence, settings mutations, AI, archive or push.
 
 ## S09 reproducible local QA
-Expo SDK 57.0.34, RN 0.86.3, React 19.2.3, Router 57.0.32 selected from official sdk-57 template/bundledNativeModules.json. Router companion modules and system UI for Android theme; TypeScript/Expo ESLint only. Node 22.13+ (prefer Node 24). Provisional dev package dev.whitetree.guardiandemo, not release identity.
+Expo SDK 57.0.34, RN 0.86.3, React 19.2.3, Router 57.0.32 selected from official sdk-57 template/bundledNativeModules.json. Router companion modules and system UI for Android theme; TypeScript/Expo ESLint, Jest Expo and React Native Testing Library for focused component tests only. Node 22.13+ (prefer Node 24). Provisional dev package dev.whitetree.guardiandemo, not release identity.
 S07 registry DNS EAI_AGAIN; no lockfile invented. Candidate remains incomplete until actual mobile/package-lock.json is generated, reviewed and committed on this branch with coordinator approval. Check clean checkout and exact HEAD, then:
 ~~~sh
 cd mobile
@@ -14,12 +14,14 @@ npx expo-doctor
 npm run typecheck
 npm run lint
 npm test
+npm run test:components
 npm ci
 npm run typecheck
 npm run lint
 npm test
+npm run test:components
 ~~~
-Review any dependency fixes; no root installs or CI edits. Install Android Studio SDK API 36, JDK 17, platform-tools, emulator/KVM per Expo SDK 57 local setup docs on authorized workstation; verify SDK requirements and adb devices. Start emulator, run npm run android from mobile (npm start if Metro not running). Physical USB device: adb devices, npx expo run:android --device. No EAS/cloud build/signing/release. Record exact SHA, commands, exit codes, device/OS/build and screenshots. Inspect generated Android permissions and bundle/config for secrets and unexpected providers; development tooling may use local network, fixture transport must not. Unit checks do not prove native behavior; run component tests separately once suitable harness approved/available.
+Review any dependency fixes; no root installs or CI edits. Install Android Studio SDK API 36, JDK 17, platform-tools, emulator/KVM per Expo SDK 57 local setup docs on authorized workstation; verify SDK requirements and adb devices. Start emulator, run npm run android from mobile (npm start if Metro not running). Physical USB device: adb devices, npx expo run:android --device. No EAS/cloud build/signing/release. Record exact SHA, commands, exit codes, device/OS/build and screenshots. Inspect generated Android permissions and bundle/config for secrets and unexpected providers; development tooling may use local network, fixture transport must not. Unit and mocked component checks do not prove native behavior; execute both suites, record their outcomes separately.
 
 ## Manual matrix
 - Home Today=2, Pending=6 independently; status runtime unverified. Open each count into Planner; verify expected IDs pending 103,102,101,105,106,104; today 102,101; week 101,105; saved 107,108. Same-title distinct IDs, long/undated/null URL and local status not submitted. Activity summary, Settings, Android Back.

@@ -75,6 +75,13 @@ test('late response cannot publish after cancellation or scenario switch',async(
   const other=store.load('pending');store.setScenario('empty',createFixtureClient('empty',0));await other;
   assert.equal(store.getState().views.pending.snapshot,undefined);
 });
+test('authorization denial from canceled view still invalidates same-account cache',async()=>{
+  const store=createStore(createFixtureClient('normal',0));await store.load('today');
+  store.setScenario('unauthenticated',createFixtureClient('unauthenticated',20));
+  const pending=store.load('pending');store.cancel('pending');await pending;
+  assert.equal(store.getState().locked.code,'UNAUTHENTICATED');
+  assert.equal(store.getState().views.today.snapshot,undefined);
+});
 test('rate limit stops subsequent reads before retry window',async()=>{
   const store=createStore(createFixtureClient('rate-limit',0));await store.load('pending');
   assert.equal(store.getState().views.pending.error.code,'RATE_LIMITED');
@@ -87,7 +94,7 @@ test('reject malformed DTOs, foreign URL, submitted rows and revision mismatch',
   for(const corrupt of [
     b=>{b.items[0].canvasUrl='https://foreign.example/';},b=>{b.items[0].submitted=true;},
     b=>{b.items[0].guardianStatus='unknown';},b=>{b.items[0].key='wrong';},
-    b=>{b.page.nextOffset=12;},b=>{b.page.revision='bad';},b=>{b.freshness.state='unknown';}
+    b=>{b.page.nextOffset=12;},b=>{b.page.revision='bad';},b=>{b.freshness.state='unknown';},b=>{b.freshness.state=['fresh'];}
   ]){const result=await client.activities(query);corrupt(result.body);assert.throws(()=>validatePage(result,query),{code:'PROTOCOL'});}
 });
 test('fixture uses no fetch or XMLHttpRequest',async()=>{

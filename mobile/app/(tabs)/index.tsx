@@ -14,9 +14,9 @@ export default function Home() {
   return <Screen><Copy kind="heading">Your academic overview</Copy>
     {s.locked?<Notice error={s.locked}/>:<>
       <ViewContent view="today" state={s.views.today} preview/>
-      <Button label="Open Today planner" onPress={()=>router.push({pathname:'/planner',params:{view:'today'}})}/>
+      <Button label="Open Today planner" onPress={()=>router.navigate({pathname:'/planner',params:{view:'today'}})}/>
       <ViewContent view="pending" state={s.views.pending} preview/>
-      <Button label="Open Pending planner" onPress={()=>router.push({pathname:'/planner',params:{view:'pending'}})}/>
+      <Button label="Open Pending planner" onPress={()=>router.navigate({pathname:'/planner',params:{view:'pending'}})}/>
       <StatusContent compact/>
     </>}
   </Screen>;
