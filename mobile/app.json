@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "Canvas Guardian Demo",
+    "slug": "canvas-guardian-demo",
+    "version": "0.1.0",
+    "orientation": "default",
+    "platforms": [
+      "android"
+    ],
+    "userInterfaceStyle": "automatic",
+    "scheme": "guardian-demo",
+    "plugins": [
+      "expo-router"
+    ],
+    "android": {
+      "package": "dev.whitetree.guardiandemo",
+      "allowBackup": false
+    },
+    "updates": {
+      "enabled": false
+    }
+  }
+}
