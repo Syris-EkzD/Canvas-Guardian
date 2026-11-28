@@ -15,7 +15,7 @@ test('demo label and accessible selected/disabled controls', () => {
   fireEvent.press(screen.getByRole('button',{name:/Today/}));
   fireEvent.press(screen.getByRole('button',{name:'Retry'}));
   expect(press).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole('button',{name:/Today/})).toHaveAccessibilityState({selected:true});
+  expect(screen.getByRole('button',{name:/Today/})).toBeSelected();
 });
 test('row routes with stable activity identity and no external launch', async () => {
   const q={view:'pending',limit:50,offset:0};
