@@ -10,7 +10,7 @@ export default function Home() {
     if(!current.views.today.snapshot&&!current.views.today.error)void demo.load('today');
     if(!current.views.pending.snapshot&&!current.views.pending.error)void demo.load('pending');
     if(!current.status.data&&!current.status.error)void demo.loadStatus();
-  },[s.scenario]));
+  },[]));
   return <Screen><Copy kind="heading">Your academic overview</Copy>
     {s.locked?<Notice error={s.locked}/>:<>
       <ViewContent view="today" state={s.views.today} preview/>

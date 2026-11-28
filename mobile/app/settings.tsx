@@ -10,7 +10,7 @@ export default function Settings() {
   useFocusEffect(useCallback(()=>{
     const current=demo.getState();
     if(!current.status.data&&!current.status.error)void demo.loadStatus();
-  },[s.scenario]));
+  },[]));
   return <Screen><Copy kind="heading">Settings and status</Copy><Copy tone="muted">Read-only configuration. No credentials, connection, integration or setting can be changed.</Copy>
     <StatusContent/><Card><Copy kind="title">Demo test controls</Copy>
       <Copy kind="small">These change only in-memory synthetic responses, not Guardian settings. After choosing a scenario, open a view and refresh to exercise it. Reset demo clears the fixture cache and simulated authorization lock.</Copy>
